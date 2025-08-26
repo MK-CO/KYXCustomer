@@ -1,0 +1,132 @@
+2025-08-22 11:17:24 [ERROR] : 获取性能状态失败: 'TaskScheduler' object has no attribute 'master_switch_enabled'
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/api/system.py:301
+get_performance_status()
+
+2025-08-22 13:09:19 [ERROR] : ❌ 加载任务配置失败: 'TaskConfig' object has no attribute 'get_all_configs'
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:124
+_load_and_register_tasks()
+
+2025-08-22 13:32:44 [ERROR] : ❌ 更新任务配置失败: customer_service_analysis, 'TaskConfig' object has no attribute 'get_task_config'
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:500
+update_task_config()
+
+2025-08-22 13:36:17 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x106c3a340>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:36:20 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x109fa6480>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:36:21 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x104d9e480>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:36:23 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x106c0e480>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:36:58 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x1045ba480>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:37:25 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x104f22480>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:37:35 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x105daa480>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:37:45 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x11940a480>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:37:49 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x10876e480>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:38:08 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x12262e5c0>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:38:18 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x10866a5c0>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:38:26 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x1060fa5c0>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:38:45 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x10894e700>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:38:49 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x10b9c65c0>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:40:21 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x104be8ea0>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:41:01 [ERROR] : ❌ 注册任务失败: customer_service_analysis, This Job cannot be serialized since the reference to its callable (<function APSchedulerService._register_task.<locals>.<lambda> at 0x1067b0fe0>) could not be determined. Consider giving a textual reference (module:function name) instead.
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:156
+_register_task()
+
+2025-08-22 13:41:30 [ERROR] : ❌ 注册任务失败: customer_service_analysis, Error resolving reference app.services.apscheduler_service:execute_scheduled_task: error looking up object
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:147
+_register_task()
+
+2025-08-22 13:42:26 [ERROR] : ❌ 更新任务配置失败: customer_service_analysis, 'TaskConfig' object has no attribute 'get_task_config'
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:491
+update_task_config()
+
+2025-08-22 13:49:03 [ERROR] : ❌ 未找到任务配置: test_cron_task
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:791
+execute_scheduled_task()
+
+2025-08-22 13:50:00 [ERROR] : ❌ 未找到任务配置: test_cron_task
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:791
+execute_scheduled_task()
+
+2025-08-22 13:51:00 [ERROR] : ❌ 未找到任务配置: test_cron_task
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:791
+execute_scheduled_task()
+
+2025-08-22 13:51:17 [ERROR] : ❌ APScheduler任务执行失败: customer_service_analysis, cannot import name 'execute_batch_analysis_workflow' from 'app.services.stage2_analysis_service' (/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/stage2_analysis_service.py)
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:249
+_execute_task()
+
+2025-08-22 13:52:00 [ERROR] : ❌ 未找到任务配置: test_cron_task
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:791
+execute_scheduled_task()
+
+2025-08-22 13:53:00 [ERROR] : ❌ 未找到任务配置: test_cron_task
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:791
+execute_scheduled_task()
+
+2025-08-22 13:53:17 [ERROR] : ❌ APScheduler任务执行失败: customer_service_analysis, cannot import name 'execute_batch_analysis_workflow' from 'app.services.stage2_analysis_service' (/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/stage2_analysis_service.py)
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:249
+_execute_task()
+
+2025-08-22 13:54:00 [ERROR] : ❌ 未找到任务配置: test_cron_task
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:791
+execute_scheduled_task()
+
+2025-08-22 13:55:00 [ERROR] : ❌ 未找到任务配置: test_cron_task
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:791
+execute_scheduled_task()
+
+2025-08-22 13:56:00 [ERROR] : ❌ 未找到任务配置: test_cron_task
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/apscheduler_service.py:791
+execute_scheduled_task()
+
+2025-08-22 14:00:39 [ERROR] : ❌ 批量分析工作流异常: task_id=SCHED_BATCH_ANALYSIS_20250822_140039_8c635609, error=TaskExecutionRecord.update_task_progress() got an unexpected keyword argument 'status'
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/stage2_analysis_service.py:1508
+execute_batch_analysis_workflow()
+
+2025-08-22 14:03:26 [ERROR] : ❌ 批量分析工作流异常: task_id=SCHED_BATCH_ANALYSIS_20250822_140326_319b4dc6, error=TaskExecutionRecord.update_task_progress() got an unexpected keyword argument 'status'
+/Users/liumingkang/Code/kyx/AIPlatformSmart/app/services/stage2_analysis_service.py:1508
+execute_batch_analysis_workflow()
+

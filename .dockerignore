@@ -1,0 +1,97 @@
+# Git 相关
+.git
+.gitignore
+.gitattributes
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虚拟环境
+ai-platform-venv/
+venv/
+env/
+ENV/
+
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+
+# 日志文件
+logs/
+*.log
+
+# 临时文件和缓存
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.coverage.*
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# 开发工具
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# 打包文件
+*.zip
+*.tar.gz
+*.tar.bz2
+*.sha256
+
+# 部署脚本（这些在镜像内不需要）
+deploy/
+*.bat
+cleanup.sh
+fix_centos_yum.sh
+package.sh
+update.sh
+
+# 文档
+README.md
+*.md
+
+# 数据文件（这些通常通过挂载提供）
+data/
+ai-platform-openapi.json
+
+# 备份文件
+*.bak
+*.backup

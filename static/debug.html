@@ -1,0 +1,2981 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Platform Debug Console</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-color: #5c64f4;
+            --primary-hover: #4c54e4;
+            --primary-light: #e6f3ff;
+            --primary-ultra-light: #f8fbff;
+            --success-color: #10b981;
+            --success-light: #d1fae5;
+            --warning-color: #f59e0b;
+            --warning-light: #fef3c7;
+            --danger-color: #ef4444;
+            --danger-light: #fef2f2;
+            --bg-primary: #e6f3ff;
+            --bg-secondary: #ffffff;
+            --bg-card: #ffffff;
+            --bg-hover: #f8fbff;
+            --text-primary: #1a1a1a;
+            --text-secondary: #666;
+            --text-muted: #8892a6;
+            --border-color: #e1e5e9;
+            --border-hover: #d1d5db;
+            --border-focus: #5c64f4;
+            --shadow-sm: 0 2px 8px rgba(92, 100, 244, 0.08);
+            --shadow-md: 0 4px 16px rgba(92, 100, 244, 0.12);
+            --shadow-lg: 0 8px 32px rgba(92, 100, 244, 0.15);
+            --shadow-button: 0 2px 8px rgba(92, 100, 244, 0.2);
+            --shadow-button-hover: 0 4px 16px rgba(92, 100, 244, 0.35);
+            --radius-sm: 4px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* 顶部导航栏 */
+        .header {
+            background: white;
+            padding: 16px 0;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 24px;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .brand-logo {
+            width: 40px;
+            height: 40px;
+            background: var(--primary-color);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .brand-logo::before {
+            content: '';
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            position: relative;
+        }
+
+        .brand-logo::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 8px;
+            height: 8px;
+            background: var(--primary-color);
+            border-radius: 50%;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin: 0;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            transition: all 0.2s ease;
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-md);
+            transform: translateY(-2px);
+        }
+
+        .card-header {
+            padding: 20px 24px 16px;
+            border-bottom: 1px solid var(--border-color);
+            background: #fafbfc;
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 0;
+        }
+
+        .card-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--primary-color);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 16px;
+        }
+
+        .card-body {
+            padding: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        .form-group:last-child {
+            margin-bottom: 0;
+        }
+
+        label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+        }
+
+        .input, .select, .textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            font-size: 0.875rem;
+            transition: all 0.2s ease;
+            background: var(--bg-secondary);
+        }
+
+        .input:focus, .select:focus, .textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgb(99 102 241 / 0.1);
+        }
+
+        .button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border: none;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            text-decoration: none;
+            margin-right: 6px;
+            margin-bottom: 6px;
+            outline: none;
+            position: relative;
+            overflow: hidden;
+            white-space: nowrap;
+            min-height: 32px;
+            box-shadow: var(--shadow-button);
+        }
+
+        .button:last-child {
+            margin-right: 0;
+        }
+
+        .button::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            transition: all 0.6s ease;
+        }
+
+        .button:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+
+        .button-primary {
+            background: linear-gradient(135deg, var(--primary-color) 0%, #4a52e8 100%);
+            color: white;
+            border: 1px solid transparent;
+        }
+
+        .button-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-button-hover);
+            background: linear-gradient(135deg, var(--primary-hover) 0%, #3d45d6 100%);
+        }
+
+        .button-success {
+            background: linear-gradient(135deg, var(--success-color) 0%, #059669 100%);
+            color: white;
+            border: 1px solid transparent;
+        }
+
+        .button-success:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35);
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+        }
+
+        .button-warning {
+            background: linear-gradient(135deg, var(--warning-color) 0%, #d97706 100%);
+            color: white;
+            border: 1px solid transparent;
+        }
+
+        .button-warning:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(245, 158, 11, 0.35);
+            background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+        }
+
+        .button-danger {
+            background: linear-gradient(135deg, var(--danger-color) 0%, #dc2626 100%);
+            color: white;
+            border: 1px solid transparent;
+        }
+
+        .button-danger:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(239, 68, 68, 0.35);
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+        }
+
+        .button-outline {
+            background: white;
+            color: var(--primary-color);
+            border: 1px solid var(--border-color);
+        }
+
+        .button-outline:hover {
+            background: var(--bg-hover);
+            border-color: var(--primary-color);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-button);
+        }
+
+        .button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        .button:disabled::before {
+            display: none;
+        }
+
+        /* 🔥 新增：小尺寸按钮样式 */
+        .button-small {
+            padding: 4px 8px;
+            font-size: 11px;
+            min-height: 24px;
+            gap: 4px;
+        }
+
+        .button:active {
+            transform: translateY(0) !important;
+        }
+
+        .result-container {
+            grid-column: 1 / -1;
+            margin-top: 1.5rem;
+        }
+
+        .result {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 0.875rem;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .result-loading {
+            background: #f0f9ff;
+            border-color: #0ea5e9;
+            color: #0c4a6e;
+        }
+
+        .result-success {
+            background: #f0fdf4;
+            border-color: var(--success-color);
+            color: #14532d;
+        }
+
+        .result-error {
+            background: #fef2f2;
+            border-color: var(--danger-color);
+            color: #991b1b;
+        }
+
+        .result-info {
+            background: #f8fafc;
+            border-color: var(--text-muted);
+            color: var(--text-primary);
+        }
+
+        .result-warning {
+            background: #fffbeb;
+            border-color: #f59e0b;
+            color: #92400e;
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .status-online {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .status-offline {
+            background: #fef2f2;
+            color: #991b1b;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid var(--border-color);
+            border-radius: 50%;
+            border-top-color: var(--primary-color);
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .stat-card {
+            background: var(--bg-primary);
+            padding: 1rem;
+            border-radius: var(--radius-md);
+            text-align: center;
+            border: 1px solid var(--border-color);
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            line-height: 1;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        .auth-card {
+            background: linear-gradient(135deg, #fef3c7, #fde68a);
+            border-color: #f59e0b;
+        }
+
+        .auth-card .card-header {
+            background: rgba(245, 158, 11, 0.1);
+            border-bottom-color: #f59e0b;
+        }
+
+        .toggle-fields {
+            transition: all 0.3s ease;
+        }
+
+        .field-group {
+            padding: 1rem;
+            background: var(--bg-primary);
+            border-radius: var(--radius-md);
+            margin-top: 1rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .field-group h4 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-content">
+                <div class="header-left">
+                    <div class="brand-logo"></div>
+                    <div>
+                        <h1>AIPlatform 控制台</h1>
+                        <p>智能分析系统管理中心</p>
+                    </div>
+                </div>
+                
+                <!-- 轮询状态指示器 -->
+                <div id="pollingStatus" style="display: none; background: var(--primary-light); padding: 10px 16px; border-radius: 12px; border: 1px solid var(--primary-color); font-size: 13px; box-shadow: var(--shadow-sm);">
+                    <span style="color: var(--success-color); font-size: 16px; animation: pulse 2s infinite;">●</span>
+                    <span style="color: var(--text-primary); font-weight: 500; margin-left: 8px;">正在监控任务进度...</span>
+                    <button onclick="stopAllPolling()" class="button button-outline" style="margin-left: 12px; padding: 4px 12px; font-size: 11px;">
+                        ⏹ 停止监控
+                    </button>
+                </div>
+                
+                <style>
+                    @keyframes pulse {
+                        0%, 100% { opacity: 1; }
+                        50% { opacity: 0.5; }
+                    }
+                </style>
+            </div>
+        </div>
+
+        <!-- API配置（隐藏但保留功能） -->
+        <div style="display: none;">
+            <input type="password" id="apiKey" value="YWktcGxhdGZvcm0tc21hcnQtMjAyNC1lbmNyeXB0ZWQ=">
+            <input type="text" id="baseUrl" value="http://localhost:8993">
+            </div>
+
+        <!-- Task Management Table -->
+        <div class="result-container" id="taskTableContainer">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <div class="card-icon">⚙</div>
+                        任务管理与执行记录
+                        <div style="margin-left: auto; display: flex; gap: 8px;">
+                            <button onclick="refreshTaskConfigs()" class="button button-primary">
+                                刷新
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body" style="overflow-x: auto;">
+                    <!-- 任务配置表格 -->
+                    <div id="taskConfigView" style="overflow-x: auto;">
+                        <table id="taskConfigTable" style="width: 100%; min-width: 1200px; border-collapse: collapse; font-size: 13px; table-layout: fixed;">
+                            <colgroup>
+                                <col style="width: 18%;">
+                                <col style="width: 10%;">
+                                <col style="width: 12%;">
+                                <col style="width: 10%;">
+                                <col style="width: 12%;">
+                                <col style="width: 12%;">
+                                <col style="width: 10%;">
+                                <col style="width: 16%;">
+                            </colgroup>
+                            <thead>
+                                <tr style="background: var(--primary-ultra-light); border-bottom: 2px solid var(--border-focus);">
+                                    <th style="padding: 14px 10px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">任务名称</th>
+                                    <th style="padding: 14px 10px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">类型</th>
+                                    <th style="padding: 14px 10px; text-align: center; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">状态控制</th>
+                                    <th style="padding: 14px 10px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">调度间隔</th>
+                                    <th style="padding: 14px 10px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">上次执行</th>
+                                    <th style="padding: 14px 10px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">下次执行</th>
+                                    <th style="padding: 14px 10px; text-align: center; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">执行统计</th>
+                                    <th style="padding: 14px 10px; text-align: center; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="taskConfigTableBody">
+                                <tr>
+                                    <td colspan="8" style="padding: 2rem; text-align: center; color: var(--text-secondary);">
+                                        加载任务配置中...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+
+                            </div>
+                        </div>
+                    </div>
+
+        <!-- System Monitor Table -->
+        <div class="result-container" id="systemMonitorContainer" style="margin-top: 2rem;">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <div class="card-icon">⚡</div>
+                        系统监控
+                        <div style="margin-left: auto; display: flex; gap: 8px; align-items: center;">
+                            <!-- 🚀 APScheduler总开关控制 -->
+                            <div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md);">
+                                <span style="font-size: 12px; color: var(--text-secondary);">APScheduler总开关:</span>
+                                <div id="masterSwitchStatus" style="font-size: 12px; font-weight: 600;">
+                                    <span id="masterSwitchText">加载中...</span>
+                                </div>
+                                <button id="masterSwitchToggle" onclick="toggleMasterSwitch()" 
+                                        class="button button-small" 
+                                        style="padding: 4px 8px; font-size: 11px; min-width: 50px;"
+                                        disabled>
+                                    切换
+                                </button>
+                            </div>
+                            <button onclick="refreshSystemMonitor()" class="button button-primary">
+                                刷新
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body" style="overflow-x: auto;">
+                    <div id="systemMonitorView" style="overflow-x: auto;">
+                        <table id="systemMonitorTable" style="width: 100%; min-width: 1200px; border-collapse: collapse; font-size: 13px; table-layout: fixed;">
+                            <colgroup>
+                                <col style="width: 18%;">
+                                <col style="width: 10%;">
+                                <col style="width: 12%;">
+                                <col style="width: 10%;">
+                                <col style="width: 12%;">
+                                <col style="width: 12%;">
+                                <col style="width: 10%;">
+                                <col style="width: 16%;">
+                            </colgroup>
+                            <thead>
+                                <tr style="background: var(--primary-ultra-light); border-bottom: 2px solid var(--border-focus);">
+                                    <th style="padding: 14px 10px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">组件名称</th>
+                                    <th style="padding: 14px 10px; text-align: center; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">状态</th>
+                                    <th style="padding: 14px 10px; text-align: center; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">当前</th>
+                                    <th style="padding: 14px 10px; text-align: center; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">最大</th>
+                                    <th style="padding: 14px 10px; text-align: center; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">等待</th>
+                                    <th style="padding: 14px 10px; text-align: center; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">已完成</th>
+                                    <th style="padding: 14px 10px; text-align: center; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">类型</th>
+                                    <th style="padding: 14px 10px; text-align: left; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">描述</th>
+                                </tr>
+                            </thead>
+                            <tbody id="systemMonitorTableBody">
+                                <tr>
+                                    <td colspan="8" style="padding: 2rem; text-align: center; color: var(--text-secondary);">
+                                        加载系统监控信息中...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Task Records Modal -->
+        <div id="taskRecordsModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(92, 100, 244, 0.1); backdrop-filter: blur(8px); z-index: 10000; overflow-y: auto;">
+            <div style="background: white; margin: 30px auto; max-width: 95%; width: 1400px; border-radius: 16px; box-shadow: var(--shadow-lg); border: 1px solid var(--border-color);">
+                <div style="padding: 24px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: var(--primary-ultra-light); border-radius: 16px 16px 0 0;">
+                    <h3 id="taskRecordsModalTitle" style="margin: 0; color: var(--text-primary); font-size: 18px; font-weight: 600;">任务执行记录</h3>
+                    <button onclick="closeTaskRecordsModal()" style="background: none; border: none; font-size: 24px; cursor: pointer; color: var(--text-secondary); padding: 8px; border-radius: 50%; transition: all 0.2s ease;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'">×</button>
+                </div>
+                <div style="padding: 20px;">
+                    <div style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
+                        <button onclick="refreshTaskRecordsModal()" class="button button-primary">🔄 刷新</button>
+                        <span id="taskRecordsCount" style="color: var(--text-secondary); font-size: 14px; padding: 8px 12px; background: var(--primary-light); border-radius: 6px;"></span>
+                    </div>
+                    <div style="overflow-x: auto; max-height: 60vh; border: 1px solid var(--border-color); border-radius: 8px;">
+                        <table id="taskRecordsModalTable" style="width: 100%; min-width: 1500px; border-collapse: collapse; font-size: 12px; table-layout: fixed;">
+                            <colgroup>
+                                <col style="width: 8%;">
+                                <col style="width: 12%;">
+                                <col style="width: 7%;">
+                                <col style="width: 7%;">
+                                <col style="width: 10%;">
+                                <col style="width: 10%;">
+                                <col style="width: 8%;">
+                                <col style="width: 10%;">
+                                <col style="width: 12%;">
+                                <col style="width: 12%;">
+                                <col style="width: 10%;">
+                            </colgroup>
+                            <thead>
+                                <tr style="background: var(--primary-ultra-light); border-bottom: 2px solid var(--border-focus); position: sticky; top: 0;">
+                                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">任务ID</th>
+                                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">任务名称</th>
+                                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">状态</th>
+                                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">触发方式</th>
+                                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">开始时间</th>
+                                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">结束时间</th>
+                                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">耗时</th>
+                                    <th style="padding: 12px 8px; text-align: center; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">进度</th>
+                                    <th style="padding: 12px 8px; text-align: center; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">处理记录</th>
+                                    <th style="padding: 12px 8px; text-align: left; font-weight: 600; color: var(--text-primary); border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">跳过原因</th>
+                                    <th style="padding: 12px 8px; text-align: center; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="taskRecordsModalBody">
+                                <tr>
+                                    <td colspan="11" style="padding: 2rem; text-align: center; color: var(--text-secondary);">
+                                        加载中...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Result Display -->
+        <div class="result-container">
+            <div id="result" class="result result-info">
+                准备就绪，等待操作...
+            </div>
+        </div>
+            </div>
+
+        <!-- 日期选择模态框 -->
+        <div id="dateSelectionModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(92, 100, 244, 0.1); backdrop-filter: blur(8px); z-index: 2000; align-items: center; justify-content: center;">
+            <div style="background: white; border-radius: 16px; padding: 2rem; max-width: 450px; width: 90%; box-shadow: var(--shadow-lg); border: 1px solid var(--border-color);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
+                    <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                        <span style="color: var(--primary-color);">📅</span>
+                        选择执行时间范围
+                    </h3>
+                    <button onclick="closeDateSelectionModal()" style="background: none; border: none; font-size: 20px; color: var(--text-secondary); cursor: pointer; padding: 8px; border-radius: 50%; transition: all 0.2s ease;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'">×</button>
+                </div>
+                
+                <div style="margin-bottom: 2rem;">
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.5rem; color: var(--text-primary); font-weight: 500; font-size: 14px;">
+                            开始日期
+                        </label>
+                        <input type="date" id="taskStartDate" style="width: 100%; padding: 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text-primary); font-size: 14px; transition: all 0.2s ease;" onfocus="this.style.borderColor='var(--border-focus)'; this.style.boxShadow='0 0 0 3px rgba(92, 100, 244, 0.1)'" onblur="this.style.borderColor='var(--border-color)'; this.style.boxShadow='none'">
+                    </div>
+                    
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.5rem; color: var(--text-primary); font-weight: 500; font-size: 14px;">
+                            结束日期
+                        </label>
+                        <input type="date" id="taskEndDate" style="width: 100%; padding: 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text-primary); font-size: 14px; transition: all 0.2s ease;" onfocus="this.style.borderColor='var(--border-focus)'; this.style.boxShadow='0 0 0 3px rgba(92, 100, 244, 0.1)'" onblur="this.style.borderColor='var(--border-color)'; this.style.boxShadow='none'">
+                    </div>
+                    
+                    <div style="padding: 12px; background: var(--primary-light); border-radius: var(--radius-md); border-left: 4px solid var(--primary-color);">
+                        <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">
+                            💡 <strong>提示：</strong>选择要处理的数据时间范围，系统将抽取该时间段内的数据并进行分析
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button onclick="closeDateSelectionModal()" class="button button-outline" style="margin: 0;">
+                        取消
+                    </button>
+                    <button onclick="confirmTaskExecution()" class="button button-primary" style="margin: 0;">
+                        🚀 执行任务
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 获取API配置
+        function getApiConfig() {
+            return {
+                baseUrl: document.getElementById('baseUrl').value.replace(/\/$/, ''),
+                apiKey: document.getElementById('apiKey').value || 'YWktcGxhdGZvcm0tc21hcnQtMjAyNC1lbmNyeXB0ZWQ='
+            };
+        }
+
+        // 通用API请求函数
+        async function apiRequest(endpoint, method = 'GET', data = null) {
+            const config = getApiConfig();
+            const url = `${config.baseUrl}${endpoint}`;
+            
+            // 优先使用localStorage中的token，否则使用配置的API Key
+            const token = localStorage.getItem('auth_token') || config.apiKey;
+            
+            const options = {
+                method: method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                }
+            };
+
+            if (data && method !== 'GET') {
+                options.body = JSON.stringify(data);
+            }
+
+            try {
+                showLoading();
+                const response = await fetch(url, options);
+                
+                if (response.status === 429) {
+                    // 限流错误特殊处理
+                    try {
+                        const errorResult = await response.json();
+                        handleRateLimitError(errorResult);
+                        return errorResult;
+                    } catch (e) {
+                        // 如果无法解析JSON，使用默认限流错误处理
+                        const errorData = {
+                            success: false,
+                            error_type: "RATE_LIMIT",
+                            message: "请求过于频繁，请稍后重试",
+                            status_code: 429
+                        };
+                        handleRateLimitError(errorData);
+                        return errorData;
+                    }
+                }
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    // 对于成功的响应，不显示结果（避免干扰用户界面）
+                    hideLoading();
+                } else {
+                    showResult(result, 'error');
+                }
+                return result;
+            } catch (error) {
+                const errorData = {
+                    error: error.message,
+                    url: url,
+                    timestamp: new Date().toISOString()
+                };
+                showResult(errorData, 'error');
+                console.error('API请求失败:', error);
+                return errorData;
+            }
+        }
+
+        // 显示加载状态
+        function showLoading() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = 'result result-loading';
+            resultDiv.innerHTML = '<div class="loading-spinner"></div> 处理请求中...';
+        }
+
+        // 隐藏加载状态
+        function hideLoading() {
+            const resultDiv = document.getElementById('result');
+            if (resultDiv.className.includes('result-loading')) {
+                resultDiv.className = 'result';
+                resultDiv.innerHTML = '';
+            }
+        }
+
+        // 处理限流错误的专门函数
+        function handleRateLimitError(errorData) {
+            console.warn('🚫 触发限流:', errorData);
+            
+            const errorType = errorData.error_type || errorData.detail?.error_type || 'RATE_LIMIT';
+            const message = errorData.message || errorData.detail?.message || '请求过于频繁';
+            const suggestion = errorData.suggestion || errorData.detail?.suggestion || '请稍后重试';
+            const retryAfter = errorData.retry_after_seconds || errorData.detail?.retry_after_seconds || 60;
+            const limitValue = errorData.limit_value || errorData.detail?.limit_value;
+            const limitType = errorData.limit_type || errorData.detail?.limit_type;
+            
+            // 创建友好的限流提示
+            let rateLimitHtml = `
+                <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
+                    <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
+                        <span style="font-size: 1.5rem; margin-right: 0.5rem;">⚠️</span>
+                        <strong style="color: #856404;">请求频率限制</strong>
+                    </div>
+                    
+                    <div style="color: #856404; margin-bottom: 1rem;">
+                        <p style="margin: 0.5rem 0;"><strong>原因:</strong> ${message}</p>
+                        <p style="margin: 0.5rem 0;"><strong>建议:</strong> ${suggestion}</p>
+                        
+                        ${limitType && limitValue ? `
+                            <p style="margin: 0.5rem 0;"><strong>当前限制:</strong> ${limitValue} 次/${limitType === 'minute' ? '分钟' : limitType === 'hour' ? '小时' : '天'}</p>
+                        ` : ''}
+                        
+                        <p style="margin: 0.5rem 0;"><strong>等待时间:</strong> ${Math.ceil(retryAfter / 60)} 分钟</p>
+                    </div>
+                    
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <button onclick="reloadSecurityConfig()" 
+                                style="padding: 0.5rem 1rem; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem;">
+                            重新加载配置
+                        </button>
+                        
+                        <button onclick="checkCurrentLimits()" 
+                                style="padding: 0.5rem 1rem; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem;">
+                            查看当前限制
+                        </button>
+                        
+                        <div id="rateLimitTimer" style="margin-left: auto; font-size: 0.9rem; color: #856404;"></div>
+                    </div>
+                </div>
+            `;
+            
+            // 显示限流错误
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = 'result result-warning';
+            resultDiv.innerHTML = rateLimitHtml;
+            
+            // 启动倒计时
+            startRetryTimer(retryAfter);
+        }
+
+        // 倒计时函数
+        function startRetryTimer(seconds) {
+            const timerDiv = document.getElementById('rateLimitTimer');
+            if (!timerDiv) return;
+            
+            let remainingSeconds = seconds;
+            
+            const updateTimer = () => {
+                const minutes = Math.floor(remainingSeconds / 60);
+                const secs = remainingSeconds % 60;
+                timerDiv.textContent = `⏰ ${minutes}:${secs.toString().padStart(2, '0')} 后可重试`;
+                
+                if (remainingSeconds > 0) {
+                    remainingSeconds--;
+                    setTimeout(updateTimer, 1000);
+                } else {
+                    timerDiv.textContent = '✅ 现在可以重试了';
+                    timerDiv.style.color = '#28a745';
+                }
+            };
+            
+            updateTimer();
+        }
+
+        // 重新加载安全配置
+        async function reloadSecurityConfig() {
+            try {
+                showResult('🔄 正在重新加载配置...', 'info');
+                const result = await fetch(`${getApiConfig().baseUrl}/api/v1/security/reload-config`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('auth_token') || getApiConfig().apiKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await result.json();
+                
+                if (result.ok && data.success) {
+                    showResult(`✅ ${data.message}\n\n新的配置:\n${JSON.stringify(data.config, null, 2)}`, 'success');
+                } else {
+                    showResult(`❌ 重新加载配置失败: ${data.message || '未知错误'}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ 重新加载配置失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 查看当前限制
+        async function checkCurrentLimits() {
+            try {
+                showResult('🔍 正在查询当前限制...', 'info');
+                const result = await fetch(`${getApiConfig().baseUrl}/api/v1/security/status`, {
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('auth_token') || getApiConfig().apiKey}`
+                    }
+                });
+                
+                const data = await result.json();
+                
+                if (result.ok && data.success) {
+                    const config = data.data.config || {};
+                    const statusHtml = `
+                        📊 当前安全配置:
+                        
+                        🔒 限流状态: ${config.rate_limit_enabled ? '✅ 已启用' : '❌ 已禁用'}
+                        📅 每分钟限制: ${config.requests_per_minute || 'N/A'} 次
+                        🕐 每小时限制: ${config.requests_per_hour || 'N/A'} 次  
+                        📆 每日限制: ${config.requests_per_day || 'N/A'} 次
+                        
+                        🔐 登录安全:
+                        🎯 最大尝试次数: ${config.login_max_attempts || 'N/A'} 次
+                        ⏰ 锁定时长: ${config.lockout_duration_minutes || 'N/A'} 分钟
+                    `;
+                    showResult(statusHtml, 'info');
+                } else {
+                    showResult(`❌ 查询限制失败: ${data.message || '未知错误'}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ 查询限制失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 显示结果
+        function showResult(data, type = 'info') {
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = `result result-${type}`;
+            
+            if (typeof data === 'object') {
+                resultDiv.textContent = JSON.stringify(data, null, 2);
+            } else {
+                resultDiv.innerHTML = data.replace(/\n/g, '<br>');
+            }
+        }
+
+
+
+        // ===== 任务管理功能 =====
+
+        // 刷新系统监控
+        async function refreshSystemMonitor() {
+            try {
+                console.log('🔄 开始刷新系统监控...');
+                
+                // 🔥 添加时间戳防止缓存
+                const timestamp = new Date().getTime();
+                const result = await apiRequest(`/api/v1/system/performance/status?_t=${timestamp}`);
+                
+                console.log('📊 系统监控API响应:', result);
+                
+                if (result && result.success) {
+                    const performance = result.performance_status;
+                    const concurrency = performance.concurrency;
+                    const scheduler = performance.scheduler;
+                    
+                    // 🔥 新增：更新总开关状态显示
+                    updateMasterSwitchDisplay(scheduler.master_switch || {});
+                    
+                    // 创建监控数据行
+                    let monitorRows = [];
+                    
+                    // 线程池状态行
+                    monitorRows.push({
+                        name: '线程池',
+                        type: 'ThreadPool',
+                        icon: '🧵',
+                        status: concurrency.thread_pool.initialized ? '运行中' : '未初始化',
+                        statusColor: concurrency.thread_pool.initialized ? 'success' : 'danger',
+                        current: concurrency.thread_pool.initialized ? concurrency.thread_pool.active_threads : 0,
+                        max: concurrency.thread_pool.initialized ? concurrency.thread_pool.max_workers : 0,
+                        pending: concurrency.thread_pool.initialized ? (concurrency.thread_pool.pending_tasks || 0) : 0,
+                        completed: '-',
+                        description: concurrency.thread_pool.initialized ? 'I/O密集型任务执行池' : '线程池未初始化'
+                    });
+                    
+                    // 异步任务状态行
+                    monitorRows.push({
+                        name: '异步任务',
+                        type: 'AsyncTasks',
+                        icon: '📋',
+                        status: concurrency.async_tasks.running_tasks > 0 ? `${concurrency.async_tasks.running_tasks} 运行中` : '空闲',
+                        statusColor: concurrency.async_tasks.running_tasks > 0 ? 'warning' : 'success',
+                        current: concurrency.async_tasks.running_tasks,
+                        max: '∞',
+                        pending: 0,
+                        completed: concurrency.async_tasks.completed_tasks,
+                        description: concurrency.async_tasks.running_task_ids.length > 0 ? 
+                                    concurrency.async_tasks.running_task_ids.map(id => id.substring(0, 8)).join(', ') + '...' : 
+                                    '后台任务管理器'
+                    });
+                    
+                    // 🔥 调度器状态行 - 考虑总开关状态
+                    const masterSwitchEnabled = scheduler.master_switch?.enabled ?? scheduler.master_switch_enabled;
+                    const isRunning = scheduler.is_running;
+                    const enabledTasks = scheduler.enabled_tasks;
+                    
+                    // 🔥 调试信息：输出状态值
+                    console.log('🔧 调度器状态调试:', {
+                        masterSwitchEnabled,
+                        isRunning,
+                        enabledTasks,
+                        rawMasterSwitch: scheduler.master_switch,
+                        rawMasterSwitchEnabled: scheduler.master_switch_enabled
+                    });
+                    
+                    let schedulerStatus, schedulerStatusColor, schedulerDescription;
+                    
+                    // 🔥 最简化逻辑：只根据总开关状态判断
+                    if (masterSwitchEnabled) {
+                        schedulerStatus = '开启';
+                        schedulerStatusColor = 'success';
+                        schedulerDescription = `APScheduler已开启，${enabledTasks}个启用任务`;
+                        console.log('📌 状态判断：开启（APScheduler总开关开启）');
+                    } else {
+                        schedulerStatus = '关闭';
+                        schedulerStatusColor = 'danger';
+                        schedulerDescription = `APScheduler总开关已关闭，${enabledTasks}个任务暂停执行`;
+                        console.log('📌 状态判断：关闭（APScheduler总开关关闭）');
+                    }
+                    
+                    console.log('🎯 最终调度器状态:', {
+                        status: schedulerStatus,
+                        color: schedulerStatusColor,
+                        description: schedulerDescription
+                    });
+                    
+                    monitorRows.push({
+                        name: 'APScheduler调度器',
+                        type: 'APScheduler',
+                        icon: '🔄',
+                        status: schedulerStatus,
+                        statusColor: schedulerStatusColor,
+                        current: scheduler.active_tasks,
+                        max: enabledTasks,
+                        pending: 0,
+                        completed: '-',
+                        description: schedulerDescription
+                    });
+                    
+                    // 渲染表格
+                    console.log('🖼️ 渲染系统监控表格，包含调度器状态:', monitorRows[2]); // 第三行是调度器
+                    renderSystemMonitorTable(monitorRows);
+                } else {
+                    const tbody = document.getElementById('systemMonitorTableBody');
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="8" style="padding: 2rem; text-align: center; color: var(--text-secondary);">
+                                获取系统监控信息失败: ${result?.message || '未知错误'}
+                            </td>
+                        </tr>
+                    `;
+                }
+            } catch (error) {
+                console.error('刷新系统监控失败:', error);
+                const tbody = document.getElementById('systemMonitorTableBody');
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="8" style="padding: 2rem; text-align: center; color: var(--text-secondary);">
+                            网络错误: ${error.message}
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        // 渲染系统监控表格
+        function renderSystemMonitorTable(monitorRows) {
+            const tbody = document.getElementById('systemMonitorTableBody');
+            
+            console.log('🎨 正在渲染系统监控表格，数据行数:', monitorRows.length);
+            
+            let html = '';
+            monitorRows.forEach((row, index) => {
+                if (index === 2) { // 调度器行（第三行）
+                    console.log('🎯 正在渲染调度器行:', row);
+                }
+                html += `
+                    <tr style="border-bottom: 1px solid var(--border-color); transition: all 0.2s ease; height: 60px;" 
+                        onmouseover="this.style.background='var(--bg-hover)'; this.style.transform='translateX(2px)'" 
+                        onmouseout="this.style.background='white'; this.style.transform='translateX(0)'">
+                        <td style="padding: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="font-size: 16px;">${row.icon}</span>
+                                <div>
+                                    <div style="font-weight: 600; color: var(--text-primary); font-size: 13px; line-height: 1.3;">${row.name}</div>
+                                    <div style="font-size: 11px; color: var(--text-muted); line-height: 1.2;">${row.type}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td style="padding: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; text-align: center;">
+                            <span class="button button-${row.statusColor}" style="padding: 3px 8px; margin: 0; font-size: 11px; font-weight: 500; min-width: auto;">
+                                ${row.status}
+                            </span>
+                        </td>
+                        <td style="padding: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; text-align: center; font-size: 12px; font-weight: 500; color: var(--text-primary);">
+                            ${row.current}
+                        </td>
+                        <td style="padding: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; text-align: center; font-size: 12px; color: var(--text-secondary);">
+                            ${row.max}
+                        </td>
+                        <td style="padding: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; text-align: center; font-size: 12px; color: var(--text-secondary);">
+                            ${row.pending}
+                        </td>
+                        <td style="padding: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; text-align: center; font-size: 12px; color: var(--text-secondary);">
+                            ${row.completed}
+                        </td>
+                        <td style="padding: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; text-align: center; font-size: 11px; color: var(--text-muted);">
+                            ${row.type}
+                        </td>
+                        <td style="padding: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; font-size: 11px; color: var(--text-secondary);" title="${row.description}">
+                            ${row.description}
+                        </td>
+                    </tr>
+                `;
+            });
+            
+            tbody.innerHTML = html;
+            
+            // 🔥 强制DOM刷新和确认日志
+            tbody.offsetHeight; // 强制重新计算布局
+            console.log('✅ 系统监控表格渲染完成，DOM已更新');
+            
+            // 🔥 验证第三行（调度器）的实际渲染内容
+            setTimeout(() => {
+                const schedulerRow = tbody.children[2]; // 第三行
+                if (schedulerRow) {
+                    const statusCell = schedulerRow.children[1]; // 状态列
+                    const statusSpan = statusCell.querySelector('span');
+                    console.log('🔍 验证调度器行渲染结果:', {
+                        statusText: statusSpan?.textContent,
+                        statusClass: statusSpan?.className
+                    });
+                } else {
+                    console.warn('⚠️ 未找到调度器行');
+                }
+            }, 100);
+        }
+
+        // ===== 🔥 总开关控制功能 =====
+        
+        // 更新总开关状态显示
+        function updateMasterSwitchDisplay(masterSwitchInfo) {
+            const statusText = document.getElementById('masterSwitchText');
+            const toggleButton = document.getElementById('masterSwitchToggle');
+            
+            console.log('🔧 更新总开关显示:', masterSwitchInfo);
+            
+            if (masterSwitchInfo && typeof masterSwitchInfo.enabled !== 'undefined') {
+                const isEnabled = masterSwitchInfo.enabled;
+                statusText.textContent = isEnabled ? '开启' : '关闭';
+                statusText.style.color = isEnabled ? 'var(--success-color)' : 'var(--danger-color)';
+                
+                // 启用切换按钮
+                toggleButton.disabled = false;
+                toggleButton.className = `button button-small ${isEnabled ? 'button-warning' : 'button-success'}`;
+                toggleButton.textContent = isEnabled ? '关闭' : '开启';
+                
+                console.log('✅ 总开关显示已更新:', {
+                    enabled: isEnabled,
+                    statusText: statusText.textContent,
+                    buttonText: toggleButton.textContent
+                });
+            } else {
+                statusText.textContent = '未知';
+                statusText.style.color = 'var(--text-muted)';
+                toggleButton.disabled = true;
+                toggleButton.className = 'button button-small';
+                toggleButton.textContent = '切换';
+                
+                console.warn('⚠️ 总开关信息无效:', masterSwitchInfo);
+            }
+        }
+        
+        // 切换总开关状态
+        async function toggleMasterSwitch() {
+            const toggleButton = document.getElementById('masterSwitchToggle');
+            const originalText = toggleButton.textContent;
+            const originalClass = toggleButton.className;
+            
+            try {
+                // 显示加载状态
+                toggleButton.disabled = true;
+                toggleButton.textContent = '切换中...';
+                toggleButton.className = 'button button-small';
+                
+                const result = await apiRequest('/api/v1/system/scheduler/master-switch/toggle', 'POST');
+                
+                if (result && result.success) {
+                    // 更新显示
+                    updateMasterSwitchDisplay(result.master_switch);
+                    
+                    // 显示成功消息
+                    showResult(`✅ ${result.message}`, 'success');
+                    
+                    // 🔥 立即刷新系统监控（无延迟）
+                    console.log('🔄 总开关切换成功，立即刷新系统监控...');
+                    await refreshSystemMonitor();
+                    
+                    // 🔥 再次延迟刷新确保状态同步
+                    setTimeout(async () => {
+                        console.log('🔄 延迟再次刷新系统监控...');
+                        await refreshSystemMonitor();
+                    }, 500);
+                } else {
+                    throw new Error(result?.message || '切换失败');
+                }
+            } catch (error) {
+                console.error('切换总开关失败:', error);
+                showResult(`❌ 切换总开关失败: ${error.message}`, 'error');
+                
+                // 恢复按钮状态
+                toggleButton.disabled = false;
+                toggleButton.textContent = originalText;
+                toggleButton.className = originalClass;
+            }
+        }
+        
+        // 获取总开关状态（独立调用）
+        async function loadMasterSwitchStatus() {
+            try {
+                const result = await apiRequest('/api/v1/system/scheduler/master-switch');
+                
+                if (result && result.success) {
+                    updateMasterSwitchDisplay(result.master_switch);
+                    return result.master_switch;
+                } else {
+                    console.warn('获取总开关状态失败:', result?.message);
+                    return null;
+                }
+            } catch (error) {
+                console.error('加载总开关状态失败:', error);
+                return null;
+            }
+        }
+
+        // 刷新任务配置
+        async function refreshTaskConfigs() {
+            try {
+                console.log('🔄 开始刷新任务配置...');
+                const result = await apiRequest('/api/v1/tasks/configs');
+                console.log('📥 API响应:', result);
+                
+                if (result && result.success) {
+                    console.log('✅ 成功获取任务配置:', result.data);
+                    renderTaskConfigTable(result.data);
+                } else {
+                    console.warn('⚠️ API返回失败:', result);
+                    const tbody = document.getElementById('taskConfigTableBody');
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="11" style="padding: 2rem; text-align: center; color: var(--text-error);">
+                                ❌ 获取任务配置失败: ${result?.message || '未知错误'}
+                                <br><small>请检查服务状态或刷新页面重试</small>
+                            </td>
+                        </tr>
+                    `;
+                }
+            } catch (error) {
+                console.error('❌ 任务配置请求异常:', error);
+                const tbody = document.getElementById('taskConfigTableBody');
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="11" style="padding: 2rem; text-align: center; color: var(--text-error);">
+                            ❌ 网络错误: ${error.message}
+                            <br><small>请检查服务是否启动，或稍后重试</small>
+                            <br><button onclick="refreshTaskConfigs()" class="button button-primary" style="margin-top: 8px;">重试</button>
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        // 渲染任务配置表格
+        function renderTaskConfigTable(configs) {
+            // 保存配置数据到全局变量
+            currentTaskConfigs = configs || [];
+            
+            const tbody = document.getElementById('taskConfigTableBody');
+            
+            if (!configs || configs.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="11" style="padding: 2rem; text-align: center; color: var(--text-secondary);">
+                            暂无任务配置
+                        </td>
+                    </tr>
+                `;
+                    return;
+                }
+                
+            tbody.innerHTML = configs.map(config => `
+                <tr style="border-bottom: 1px solid var(--border-color); transition: all 0.2s ease; height: 60px;" onmouseover="this.style.background='var(--bg-hover)'; this.style.transform='translateX(2px)'" onmouseout="this.style.background='white'; this.style.transform='translateX(0)'">
+                    <td style="padding: 10px; border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;" title="${config.task_description || config.task_name}">
+                        <div style="font-weight: 600; color: var(--text-primary); font-size: 13px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis;">${config.task_name}</div>
+                        ${config.task_description ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis;">${config.task_description.length > 25 ? config.task_description.substring(0, 25) + '...' : config.task_description}</div>` : ''}
+                    </td>
+                    <td style="padding: 10px; border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;">
+                        <span style="padding: 3px 8px; background: ${getTaskHandlerBadgeColor(config.task_handler)}; color: white; border-radius: 12px; font-size: 11px; font-weight: 500; white-space: nowrap; box-shadow: var(--shadow-sm);">
+                            ${getTaskHandlerLabel(config.task_handler)}
+                        </span>
+                    </td>
+                    <td style="padding: 10px; text-align: center; border-right: 1px solid var(--border-color); white-space: nowrap; vertical-align: middle;">
+                        <button onclick="toggleTaskEnabled('${config.task_key}', ${!config.is_enabled})" 
+                                class="button ${config.is_enabled ? 'button-success' : 'button-danger'}" 
+                                style="padding: 5px 12px; font-size: 11px; min-width: 60px; margin: 0;">
+                            ${config.is_enabled ? '✓ 生效' : '✗ 失效'}
+                        </button>
+                    </td>
+                    <td style="padding: 10px; border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; font-size: 12px; color: var(--text-secondary);">${formatScheduleDisplay(config)}</td>
+                    <td style="padding: 10px; font-size: 11px; border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; color: var(--text-secondary);">${formatDateTime(config.last_execution_time)}</td>
+                    <td style="padding: 10px; font-size: 11px; border-right: 1px solid var(--border-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; color: var(--text-secondary);">${formatDateTime(config.next_execution_time)}</td>
+                    <td style="padding: 10px; text-align: center; border-right: 1px solid var(--border-color); white-space: nowrap; vertical-align: middle;">
+                        <div style="font-size: 11px; line-height: 1.3;">
+                            <span style="color: var(--text-primary); font-weight: 600;">总${config.execution_count}</span>
+                            <span style="color: var(--success-color); margin-left: 4px;">✓${config.success_count}</span>
+                            <span style="color: var(--danger-color); margin-left: 4px;">✗${config.failure_count}</span>
+                        </div>
+                    </td>
+                    <td style="padding: 10px; text-align: center; white-space: nowrap; vertical-align: middle;">
+                        <div style="display: flex; gap: 3px; justify-content: center; flex-wrap: nowrap;">
+                            <button onclick="manualExecuteTask('${config.task_key}')" 
+                                    class="button button-warning" 
+                                    style="padding: 4px 8px; font-size: 10px; margin: 0;" 
+                                    ${!config.is_enabled ? 'disabled' : ''}>
+                                执行
+                            </button>
+                            <button onclick="stopTaskExecution('${config.task_key}')" 
+                                    class="button button-danger" 
+                                    style="padding: 4px 8px; font-size: 10px; margin: 0;">
+                                终止
+                            </button>
+                            <button onclick="viewTaskRecords('${config.task_key}', '${config.task_name}')" 
+                                    class="button button-primary" 
+                                    style="padding: 4px 8px; font-size: 10px; margin: 0;">
+                                记录
+                            </button>
+                            <button onclick="editTaskConfig('${config.task_key}')" 
+                                    class="button button-outline" 
+                                    style="padding: 4px 8px; font-size: 10px; margin: 0;">
+                                编辑
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        // 切换任务启用状态
+        async function toggleTaskEnabled(taskKey, enabled) {
+            const statusText = enabled ? '生效' : '失效';
+            const confirmed = confirm(`确认让任务 "${taskKey}" ${statusText}？`);
+            if (!confirmed) return;
+
+            try {
+                const result = await apiRequest(`/api/v1/tasks/configs/${taskKey}/toggle?enabled=${enabled}`, 'POST');
+            if (result && result.success) {
+                    showResult(`✅ 任务已${statusText}！`, 'success');
+                    // 刷新表格
+                    setTimeout(() => refreshTaskConfigs(), 500);
+            } else {
+                    showResult(`❌ 操作失败: ${result?.message || '未知错误'}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ 网络错误: ${error.message}`, 'error');
+            }
+        }
+
+        // 手动执行任务
+        let currentExecutionTaskKey = null; // 当前要执行的任务键
+        let pollingIntervals = new Map(); // 存储轮询定时器
+        let isPollingActive = false; // 全局轮询状态
+        let taskStatusCache = new Map(); // 存储任务状态缓存，用于智能轮询
+
+        async function manualExecuteTask(taskKey) {
+            try {
+                currentExecutionTaskKey = taskKey;
+                
+                if (taskKey === 'customer_service_analysis') {
+                    // 客服分析任务显示日期选择对话框
+                    showDateSelectionModal();
+            } else {
+                    // 其他任务直接执行
+                    const confirmed = confirm(`确认手动执行任务 "${taskKey}"？`);
+                    if (!confirmed) return;
+                    
+                    showResult(`🚀 正在手动执行任务: ${taskKey}...`, 'info');
+                    
+                    const apiUrl = `/api/v1/tasks/manual-execution/${taskKey}`;
+                    const result = await apiRequest(apiUrl, 'POST');
+                    
+                    if (result && result.success) {
+                        const taskId = result.task_id;
+                        showResult(`✅ 任务启动成功！\n任务ID: ${taskId || 'N/A'}\n${result.message || ''}\n⏱️ 正在监控任务进度...`, 'success');
+                        
+                        // 🔥 新增：启动任务状态轮询
+                        if (taskId) {
+                            startTaskPolling(taskId, taskKey);
+                        }
+                        
+                        setTimeout(() => refreshTaskConfigs(), 1000);
+                    } else {
+                        showResult(`❌ 任务执行失败: ${result?.message || '未知错误'}`, 'error');
+                    }
+                }
+            } catch (error) {
+                console.error('手动执行任务错误:', error);
+                showResult(`❌ 网络错误: ${error.message}`, 'error');
+            }
+        }
+
+        function showDateSelectionModal() {
+            // 设置默认开始日期为3天前，结束日期为昨天
+            const endDate = new Date();
+            endDate.setDate(endDate.getDate() - 1);
+            const endDateString = endDate.toISOString().split('T')[0];
+            
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - 3);
+            const startDateString = startDate.toISOString().split('T')[0];
+            
+            document.getElementById('taskStartDate').value = startDateString;
+            document.getElementById('taskEndDate').value = endDateString;
+            document.getElementById('dateSelectionModal').style.display = 'flex';
+        }
+
+        function closeDateSelectionModal() {
+            document.getElementById('dateSelectionModal').style.display = 'none';
+            currentExecutionTaskKey = null;
+        }
+
+        async function confirmTaskExecution() {
+            try {
+                const startDate = document.getElementById('taskStartDate').value;
+                const endDate = document.getElementById('taskEndDate').value;
+                
+                if (!startDate || !endDate) {
+                    showResult('❌ 请选择开始日期和结束日期', 'error');
+                    return;
+                }
+
+                // 验证日期范围
+                if (new Date(startDate) >= new Date(endDate)) {
+                    showResult('❌ 开始日期必须早于结束日期', 'error');
+                    return;
+                }
+
+                closeDateSelectionModal();
+                showResult(`🚀 正在执行任务: ${currentExecutionTaskKey} (时间范围: ${startDate} ~ ${endDate})...`, 'info');
+
+                // 构造时间字符串，添加时分秒部分
+                const startTime = `${startDate}T00:00:00`;
+                const endTime = `${endDate}T23:59:59`;
+
+                // 构造URL参数
+                const params = new URLSearchParams({
+                    start_time: startTime,
+                    end_time: endTime,
+                    loop_analysis: 'true',
+                    batch_size: '50'
+                });
+
+                // 使用时间范围API
+                const result = await apiRequest(`/api/v1/tasks/full-task-range?${params.toString()}`, 'POST');
+
+                if (result && result.success) {
+                    const extractionSummary = result.extraction_summary || {};
+                    const analysisSummary = result.analysis_summary || {};
+                    
+                    const taskId = result.task_id;
+                    showResult(`✅ 任务启动成功！
+任务ID: ${taskId || 'N/A'}
+时间范围: ${startDate} ~ ${endDate}
+抽取数据: ${extractionSummary.extracted || 0} 条
+成功分析: ${analysisSummary.successful || 0} 条
+⏱️ 正在监控任务进度...
+${result.message || ''}`, 'success');
+                    
+                    // 任务已启动，可以点击查看记录进行状态监控
+                    
+                    setTimeout(() => refreshTaskConfigs(), 1000);
+                } else {
+                    showResult(`❌ 任务执行失败: ${result?.message || '未知错误'}`, 'error');
+                }
+            } catch (error) {
+                console.error('确认任务执行错误:', error);
+                showResult(`❌ 执行失败: ${error.message}`, 'error');
+            } finally {
+                currentExecutionTaskKey = null;
+            }
+        }
+
+        // 终止任务执行
+        async function stopTaskExecution(taskKey) {
+            // 首先获取正在运行的任务
+            try {
+                const tasksResult = await apiRequest('/api/v1/tasks/records?limit=10&status=running');
+                if (!tasksResult || !tasksResult.success) {
+                    showResult('❌ 无法获取运行中的任务', 'error');
+                return;
+            }
+
+                // 查找与该任务配置相关的运行中任务
+                const runningTasks = tasksResult.data.filter(task => 
+                    task.status === 'running' && 
+                    (task.task_name.includes(taskKey) || task.task_type.includes(taskKey.split('_')[0]))
+                );
+
+                if (runningTasks.length === 0) {
+                    showResult(`⚠️ 任务 "${taskKey}" 当前没有正在运行的实例`, 'warning');
+                return;
+            }
+
+                // 如果有多个运行中的任务，终止最新的那个
+                const taskToStop = runningTasks[0];
+                const confirmed = confirm(`确认终止正在运行的任务？\n任务ID: ${taskToStop.task_id}\n任务名称: ${taskToStop.task_name}`);
+                if (!confirmed) return;
+
+                const result = await apiRequest(`/api/v1/tasks/stop/${taskToStop.task_id}?reason=用户手动终止`, 'POST');
+            if (result && result.success) {
+                    showResult(`✅ 任务已终止！\n任务ID: ${taskToStop.task_id}`, 'success');
+                    // 刷新表格
+                    setTimeout(() => refreshTaskConfigs(), 1000);
+            } else {
+                    showResult(`❌ 终止任务失败: ${result?.message || '未知错误'}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ 网络错误: ${error.message}`, 'error');
+            }
+        }
+
+        // 查看任务执行记录
+        let currentTaskKey = '';
+        let currentTaskName = '';
+
+        async function viewTaskRecords(taskKey, taskName) {
+            currentTaskKey = taskKey;
+            currentTaskName = taskName;
+            
+            // 显示模态框
+            document.getElementById('taskRecordsModal').style.display = 'block';
+            document.getElementById('taskRecordsModalTitle').textContent = `${taskName} - 执行记录`;
+            
+            // 加载数据
+            await loadTaskRecords(taskKey);
+        }
+
+                async function loadTaskRecords(taskKey) {
+            try {
+                document.getElementById('taskRecordsModalBody').innerHTML = `
+                    <tr>
+                        <td colspan="11" style="padding: 2rem; text-align: center; color: var(--text-secondary);">
+                            加载中...
+                        </td>
+                    </tr>
+                `;
+
+                // 根据任务key匹配相关的执行记录
+                let apiUrl = '/api/v1/tasks/records?limit=100';
+
+                const result = await apiRequest(apiUrl);
+                if (result && result.success) {
+                    // 直接使用任务配置键进行精确匹配
+                    const relatedRecords = result.data.filter(record => {
+                        return record.task_config_key === taskKey;
+                    });
+
+                    // 按开始时间倒序排列
+                    relatedRecords.sort((a, b) => {
+                        const timeA = new Date(a.start_time || 0);
+                        const timeB = new Date(b.start_time || 0);
+                        return timeB - timeA;
+                    });
+
+                    renderTaskRecordsModal(relatedRecords);
+                    document.getElementById('taskRecordsCount').textContent = `共找到 ${relatedRecords.length} 条执行记录`;
+                } else {
+                    document.getElementById('taskRecordsModalBody').innerHTML = `
+                        <tr>
+                            <td colspan="11" style="padding: 2rem; text-align: center; color: var(--text-secondary);">
+                                加载失败: ${result?.message || '未知错误'}
+                            </td>
+                        </tr>
+                    `;
+                }
+            } catch (error) {
+                document.getElementById('taskRecordsModalBody').innerHTML = `
+                    <tr>
+                        <td colspan="11" style="padding: 2rem; text-align: center; color: var(--danger-color);">
+                            网络错误: ${error.message}
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        function renderTaskRecordsModal(records) {
+            const tbody = document.getElementById('taskRecordsModalBody');
+            
+            if (!records || records.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="11" style="padding: 2rem; text-align: center; color: var(--text-secondary);">
+                            暂无执行记录
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+                        tbody.innerHTML = records.map(record => `
+                <tr style="border-bottom: 1px solid var(--border-color); transition: all 0.2s ease; height: 50px;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='white'">
+                    <td style="padding: 8px; font-family: monospace; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;" title="${record.task_id}">
+                        ${record.task_id.substring(0, 12)}...
+                    </td>
+                    <td style="padding: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;" title="${record.task_name}">
+                        <div style="font-weight: 500; font-size: 11px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis;">${record.task_name.length > 20 ? record.task_name.substring(0, 20) + '...' : record.task_name}</div>
+                        ${record.trigger_user ? `<div style="font-size: 9px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis;">${record.trigger_user}</div>` : ''}
+                    </td>
+                    <td style="padding: 8px; white-space: nowrap; vertical-align: middle;">
+                        <span style="padding: 2px 6px; background: ${getStatusBadgeColor(record.status)}; color: white; border-radius: 8px; font-size: 9px; font-weight: 500; box-shadow: var(--shadow-sm);">
+                            ${getStatusLabel(record.status)}
+                        </span>
+                    </td>
+                    <td style="padding: 8px; white-space: nowrap; vertical-align: middle; font-size: 10px; color: var(--text-secondary);">${record.trigger_type === 'manual' ? '手动' : '定时'}</td>
+                    <td style="padding: 8px; font-size: 10px; white-space: nowrap; vertical-align: middle; color: var(--text-secondary);">${formatDateTime(record.start_time)}</td>
+                    <td style="padding: 8px; font-size: 10px; white-space: nowrap; vertical-align: middle; color: var(--text-secondary);">${formatDateTime(record.end_time)}</td>
+                    <td style="padding: 8px; white-space: nowrap; vertical-align: middle; font-size: 10px; color: var(--text-secondary);">${(() => {
+                        if (record.status === 'running' && record.start_time && !record.duration_seconds) {
+                            const startTime = new Date(record.start_time);
+                            const now = new Date();
+                            const currentDuration = Math.floor((now - startTime) / 1000);
+                            return formatDuration(currentDuration);
+                        }
+                        return formatDuration(record.duration_seconds);
+                    })()}</td>
+                    <td style="padding: 8px; text-align: center; white-space: nowrap; vertical-align: middle;">
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 2px;">
+                            <div style="width: 50px; height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden;">
+                                <div style="height: 100%; background: ${(() => {
+                                    const successRecords = record.success_records || 0;
+                                    const failedRecords = record.failed_records || 0;
+                                    const totalRecords = record.total_records || 0;
+                                    let displayProgress;
+                                    if (totalRecords > 0 && successRecords === 0 && failedRecords === 0) {
+                                        displayProgress = 100;
+                                    } else {
+                                        displayProgress = record.completion_rate || record.actual_completion_rate || 0;
+                                    }
+                                    return displayProgress >= 100 ? 'var(--success-color)' : displayProgress >= 50 ? 'var(--warning-color)' : 'var(--danger-color)';
+                                })()}; width: ${(() => {
+                                    const successRecords = record.success_records || 0;
+                                    const failedRecords = record.failed_records || 0;
+                                    const totalRecords = record.total_records || 0;
+                                    if (totalRecords > 0 && successRecords === 0 && failedRecords === 0) {
+                                        return 100;
+                                    }
+                                    return record.completion_rate || record.actual_completion_rate || 0;
+                                })()}%; transition: width 0.3s ease;"></div>
+                            </div>
+                            <small style="font-size: 9px; color: var(--text-secondary);">${(() => {
+                                const successRecords = record.success_records || 0;
+                                const failedRecords = record.failed_records || 0;
+                                const totalRecords = record.total_records || 0;
+                                if (totalRecords > 0 && successRecords === 0 && failedRecords === 0) {
+                                    return '100%';
+                                }
+                                return (record.completion_rate || record.actual_completion_rate || 0).toFixed(1) + '%';
+                            })()}</small>
+                        </div>
+                    </td>
+                    <td style="padding: 8px; text-align: center; white-space: nowrap; vertical-align: middle;">
+                        <div style="font-size: 10px; line-height: 1.2;">
+                            <span style="color: var(--text-primary); font-weight: 600;">总${record.total_records || 0}</span>
+                            <span style="color: var(--success-color); margin-left: 4px;">✓${record.success_records || 0}</span>
+                            <span style="color: var(--danger-color); margin-left: 4px;">✗${record.failed_records || 0}</span>
+                            ${(record.skipped_records || 0) > 0 ? `<span style="color: var(--warning-color); margin-left: 4px;">⏭${record.skipped_records}</span>` : ''}
+                        </div>
+                    </td>
+                    <td style="padding: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; font-size: 10px; color: var(--text-secondary);">
+                        ${(() => {
+                            const skippedRecords = record.skipped_records || 0;
+                            const duplicateRecords = record.duplicate_records || 0;
+                            const denoisedRecords = record.denoised_records || 0;
+                            if (skippedRecords === 0) return '-';
+                            const reasons = [];
+                            if (duplicateRecords > 0) reasons.push(`重复${duplicateRecords}`);
+                            if (denoisedRecords > 0) reasons.push(`去燥${denoisedRecords}`);
+                            const otherSkipped = skippedRecords - duplicateRecords - denoisedRecords;
+                            if (otherSkipped > 0) reasons.push(`其他${otherSkipped}`);
+                            return reasons.length > 0 ? reasons.join(' ') : '数据重复';
+                        })()}
+                    </td>
+                    <td style="padding: 8px; text-align: center; white-space: nowrap; vertical-align: middle;">
+                        <div style="display: flex; gap: 4px; align-items: center; justify-content: center;">
+                            <button onclick="viewTaskDetail('${record.task_id}', '${record.task_name}')" 
+                                    class="button button-outline"
+                                    style="padding: 2px 6px; font-size: 8px; margin: 0; min-width: 35px;">
+                                ${record.status === 'running' ? '监控' : '详情'}
+                            </button>
+                            ${(record.can_terminate || (record.status && ['running', 'pending'].includes(record.status))) ? `
+                                <button onclick="terminateTask('${record.task_id}', '${record.task_name}', '${record.status}')" 
+                                        class="button"
+                                        style="padding: 2px 6px; font-size: 8px; margin: 0; min-width: 35px; background: var(--danger-color); color: white; border: 1px solid var(--danger-color);"
+                                        onmouseover="this.style.background='#dc2626'; this.style.borderColor='#dc2626';"
+                                        onmouseout="this.style.background='var(--danger-color)'; this.style.borderColor='var(--danger-color)';">
+                                    终止
+                                </button>
+                            ` : ''}
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        async function refreshTaskRecordsModal() {
+            if (currentTaskKey) {
+                await loadTaskRecords(currentTaskKey);
+            }
+        }
+
+        // 🔥 新增：终止任务功能
+        async function terminateTask(taskId, taskName, currentStatus) {
+            // 确认对话框
+            const statusDisplayMap = {
+                'running': '运行中',
+                'pending': '等待中'
+            };
+            
+            const statusText = statusDisplayMap[currentStatus] || currentStatus;
+            const confirmMessage = `确定要终止任务吗？\n\n任务ID: ${taskId}\n任务名称: ${taskName}\n当前状态: ${statusText}\n\n⚠️ 此操作不可撤销！`;
+            
+            if (!confirm(confirmMessage)) {
+                return;
+            }
+
+            try {
+                // 显示加载状态
+                const originalButton = event.target;
+                const originalText = originalButton.textContent;
+                originalButton.textContent = '终止中...';
+                originalButton.disabled = true;
+                originalButton.style.opacity = '0.6';
+
+                // 调用终止API
+                const response = await fetch(`/api/v1/tasks/stop/${encodeURIComponent(taskId)}?reason=${encodeURIComponent('用户手动终止')}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    // 成功终止
+                    showResult(`✅ 任务终止成功: ${result.message}`, 'success');
+                    
+                    // 刷新任务记录列表
+                    await refreshTaskRecordsModal();
+                    
+                } else {
+                    // 终止失败
+                    const errorMsg = result.message || result.detail || '未知错误';
+                    showResult(`❌ 任务终止失败: ${errorMsg}`, 'error');
+                    
+                    // 恢复按钮状态
+                    originalButton.textContent = originalText;
+                    originalButton.disabled = false;
+                    originalButton.style.opacity = '1';
+                }
+
+            } catch (error) {
+                console.error('终止任务时发生错误:', error);
+                showResult(`❌ 网络错误: ${error.message}`, 'error');
+                
+                // 恢复按钮状态
+                const button = event.target;
+                button.textContent = '终止';
+                button.disabled = false;
+                button.style.opacity = '1';
+            }
+        }
+
+        // 🔥 新增：批量终止任务功能（预留）
+        async function batchTerminateTasks(taskIds) {
+            if (!taskIds || taskIds.length === 0) {
+                showResult('❌ 请选择要终止的任务', 'error');
+                return;
+            }
+
+            const confirmMessage = `确定要批量终止 ${taskIds.length} 个任务吗？\n\n⚠️ 此操作不可撤销！`;
+            
+            if (!confirm(confirmMessage)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/v1/tasks/stop/batch?reason=' + encodeURIComponent('用户批量终止'), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(taskIds)
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    showResult(`✅ 批量终止完成: ${result.message}`, 'success');
+                    
+                    // 刷新任务记录列表
+                    await refreshTaskRecordsModal();
+                    
+                } else {
+                    const errorMsg = result.message || result.detail || '未知错误';
+                    showResult(`❌ 批量终止失败: ${errorMsg}`, 'error');
+                }
+
+            } catch (error) {
+                console.error('批量终止任务时发生错误:', error);
+                showResult(`❌ 网络错误: ${error.message}`, 'error');
+            }
+        }
+
+        function closeTaskRecordsModal() {
+            document.getElementById('taskRecordsModal').style.display = 'none';
+            currentTaskKey = '';
+            currentTaskName = '';
+        }
+
+        /**
+         * 查看任务详情并开始轮询（仅适用于运行中的任务）
+         * @param {string} taskId - 任务ID
+         * @param {string} taskName - 任务名称
+         */
+        async function viewTaskDetail(taskId, taskName) {
+            try {
+                // 获取任务详情
+                const result = await apiRequest(`/api/v1/tasks/records/${taskId}`, 'GET');
+                
+                if (result && result.success && result.data) {
+                    const taskData = result.data;
+                    const status = taskData.status;
+                    
+                    // 显示任务详情信息
+                    const detailsHtml = `
+                        <div style="background: var(--bg-secondary); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+                            <h4 style="margin: 0 0 0.5rem 0; color: var(--text-primary);">📋 ${taskName}</h4>
+                            <p style="margin: 0; color: var(--text-secondary); font-family: monospace; font-size: 0.9rem;">ID: ${taskId}</p>
+                        </div>
+                        
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                            <div>
+                                <strong>状态:</strong> <span style="color: ${getStatusColor(status)};">${getStatusLabel(status)}</span>
+                            </div>
+                            <div>
+                                <strong>进度:</strong> ${(taskData.completion_rate || 0).toFixed(1)}%
+                            </div>
+                            <div>
+                                <strong>开始时间:</strong> ${formatDateTime(taskData.start_time)}
+                            </div>
+                            <div>
+                                <strong>处理阶段:</strong> ${taskData.process_stage || '未知'}
+                            </div>
+                        </div>
+                        
+                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; text-align: center; margin-bottom: 1rem;">
+                            <div style="background: var(--bg-primary); padding: 0.5rem; border-radius: 4px;">
+                                <div style="font-weight: 600; color: var(--text-primary);">${taskData.total_records || 0}</div>
+                                <div style="font-size: 0.8rem; color: var(--text-secondary);">总计</div>
+                            </div>
+                            <div style="background: var(--success-color); color: white; padding: 0.5rem; border-radius: 4px;">
+                                <div style="font-weight: 600;">${taskData.success_records || 0}</div>
+                                <div style="font-size: 0.8rem;">成功</div>
+                            </div>
+                            <div style="background: var(--danger-color); color: white; padding: 0.5rem; border-radius: 4px;">
+                                <div style="font-weight: 600;">${taskData.failed_records || 0}</div>
+                                <div style="font-size: 0.8rem;">失败</div>
+                            </div>
+                            <div style="background: var(--warning-color); color: white; padding: 0.5rem; border-radius: 4px;">
+                                <div style="font-weight: 600;">${taskData.skipped_records || 0}</div>
+                                <div style="font-size: 0.8rem;">跳过</div>
+                            </div>
+                        </div>
+                        
+                        ${status === 'running' ? `
+                            <div style="background: var(--primary-color); color: white; padding: 0.75rem; border-radius: 6px; text-align: center; margin-bottom: 1rem;">
+                                🔄 开始监控任务进度（每5秒更新一次）
+                                <button onclick="stopTaskPolling('${taskId}')" style="margin-left: 1rem; padding: 0.25rem 0.5rem; font-size: 0.8rem; border: 1px solid white; background: transparent; color: white; border-radius: 4px; cursor: pointer;">
+                                    停止监控
+                                </button>
+                            </div>
+                        ` : ''}
+                    `;
+                    
+                    showResult(detailsHtml, 'info');
+                    
+                    // 如果是运行中的任务，开始轮询
+                    if (status === 'running') {
+                        console.log(`🔄 开始监控任务进度: ${taskId}`);
+                        await startTaskPolling(taskId, taskData.task_config_key || taskData.task_type);
+                    }
+                    
+                } else {
+                    showResult(`❌ 无法获取任务详情: ${result?.message || '未知错误'}`, 'error');
+                }
+            } catch (error) {
+                console.error('查看任务详情失败:', error);
+                showResult(`❌ 查看任务详情失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 辅助函数：获取状态颜色
+        function getStatusColor(status) {
+            const colors = {
+                'running': '#2196F3',
+                'completed': '#4CAF50', 
+                'failed': '#f44336',
+                'cancelled': '#FF9800'
+            };
+            return colors[status] || '#6c757d';
+        }
+
+        // 编辑任务配置
+        function editTaskConfig(taskKey) {
+            showTaskConfigEditModal(taskKey);
+        }
+
+        // 显示任务配置编辑模态框
+        function showTaskConfigEditModal(taskKey) {
+            // 获取当前配置
+            const config = currentTaskConfigs.find(c => c.task_key === taskKey);
+            if (!config) {
+                showResult('❌ 找不到任务配置', 'error');
+                return;
+            }
+            
+            const modal = document.getElementById('taskConfigEditModal') || createTaskConfigEditModal();
+            
+            // 🚀 判断当前使用的调度模式
+            const hasCron = config.schedule_cron && config.schedule_cron.trim();
+            const scheduleMode = hasCron ? 'cron' : 'interval';
+            
+            // 填充基本信息
+            document.getElementById('editTaskName').textContent = config.task_name;
+            document.getElementById('editTaskKey').textContent = config.task_key;
+            
+            // 设置调度模式
+            document.getElementById('scheduleMode').value = scheduleMode;
+            
+            if (scheduleMode === 'cron') {
+                // CRON模式
+                document.getElementById('cronInput').value = config.schedule_cron || '';
+                showCronMode();
+            } else {
+                // 间隔模式
+                const currentSeconds = config.schedule_interval;
+                let displayValue = currentSeconds;
+                let selectedUnit = 'seconds';
+                
+                if (currentSeconds >= 86400 && currentSeconds % 86400 === 0) {
+                    displayValue = currentSeconds / 86400;
+                    selectedUnit = 'days';
+                } else if (currentSeconds >= 3600 && currentSeconds % 3600 === 0) {
+                    displayValue = currentSeconds / 3600;
+                    selectedUnit = 'hours';
+                } else if (currentSeconds >= 60 && currentSeconds % 60 === 0) {
+                    displayValue = currentSeconds / 60;
+                    selectedUnit = 'minutes';
+                }
+                
+                document.getElementById('editIntervalValue').value = displayValue;
+                document.getElementById('editIntervalUnit').value = selectedUnit;
+                showIntervalMode();
+            }
+            
+            modal.style.display = 'flex';
+            currentEditingTaskKey = taskKey;
+        }
+
+        // 创建任务配置编辑模态框
+        function createTaskConfigEditModal() {
+            const modal = document.createElement('div');
+            modal.id = 'taskConfigEditModal';
+            modal.style.cssText = `
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(92, 100, 244, 0.1);
+                backdrop-filter: blur(8px);
+                z-index: 1000;
+                justify-content: center;
+                align-items: center;
+            `;
+
+            modal.innerHTML = `
+                <div onclick="event.stopPropagation()" style="background: white; border-radius: 16px; padding: 2rem; max-width: 520px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: var(--shadow-lg); border: 1px solid var(--border-color);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
+                        <h3 style="margin: 0; color: var(--text-primary); font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                            <span style="color: var(--primary-color);">⚙️</span>
+                            编辑任务配置
+                        </h3>
+                        <button onclick="closeTaskConfigEditModal()" style="background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-secondary); padding: 8px; border-radius: 50%; transition: all 0.2s ease;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='none'">&times;</button>
+                    </div>
+                    
+                    <div style="margin-bottom: 1.5rem; padding: 1rem; background: var(--bg-primary); border-radius: var(--radius-md);">
+                        <div style="margin-bottom: 0.75rem;">
+                            <strong style="color: var(--text-primary);">任务名称：</strong> 
+                            <span id="editTaskName" style="color: var(--text-secondary);"></span>
+                        </div>
+                        <div>
+                            <strong style="color: var(--text-primary);">任务标识：</strong> 
+                            <span id="editTaskKey" style="font-family: 'Monaco', 'Menlo', monospace; color: var(--text-secondary); background: white; padding: 0.125rem 0.25rem; border-radius: 3px; font-size: 0.85rem;"></span>
+                        </div>
+                    </div>
+
+                    <!-- 🚀 调度模式选择器 -->
+                    <div style="margin-bottom: 1.5rem;">
+                        <label style="display: block; margin-bottom: 0.75rem; font-weight: 600; color: var(--text-primary);">🔄 调度模式</label>
+                        <select id="scheduleMode" onchange="toggleScheduleMode()"
+                                style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: white; font-size: 1rem; cursor: pointer; transition: border-color 0.2s;"
+                                onfocus="this.style.borderColor='var(--primary-color)'"
+                                onblur="this.style.borderColor='var(--border-color)'">
+                            <option value="interval">间隔调度 - 按固定时间间隔执行</option>
+                            <option value="cron">CRON调度 - 使用CRON表达式精确控制</option>
+                        </select>
+                    </div>
+
+                    <!-- 🚀 CRON模式界面 -->
+                    <div id="cronModeDiv" style="display: none; margin-bottom: 1.5rem;">
+                        <label style="display: block; margin-bottom: 0.75rem; font-weight: 600; color: var(--text-primary);">⏰ CRON表达式</label>
+                        <div style="margin-bottom: 0.75rem;">
+                            <input type="text" id="cronInput" 
+                                   style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 1rem; font-family: 'Monaco', 'Menlo', monospace; transition: border-color 0.2s;"
+                                   placeholder="0 9 * * 1-5  (工作日上午9点)"
+                                   oninput="validateCronExpression()"
+                                   onfocus="this.style.borderColor='var(--primary-color)'"
+                                   onblur="this.style.borderColor='var(--border-color)'">
+                        </div>
+                        <div id="cronValidation" style="margin-bottom: 0.75rem;"></div>
+                        <div id="cronPreview" style="margin-bottom: 0.75rem;"></div>
+                        
+                        <div style="margin-bottom: 0.75rem;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--text-primary); font-size: 0.9rem;">🎯 CRON示例：</label>
+                            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
+                                <button type="button" onclick="setCronExample('0 */2 * * *')" class="button" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">每2小时</button>
+                                <button type="button" onclick="setCronExample('0 9 * * 1-5')" class="button" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">工作日9点</button>
+                                <button type="button" onclick="setCronExample('*/30 * * * *')" class="button" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">每30分钟</button>
+                                <button type="button" onclick="setCronExample('0 0 */3 * *')" class="button" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">每3天</button>
+                                <button type="button" onclick="setCronExample('0 8,12,18 * * *')" class="button" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">三餐时间</button>
+                            </div>
+                        </div>
+                        
+                        <div style="padding: 0.75rem; background: #e0f2fe; border-radius: var(--radius-md); border-left: 4px solid #0288d1;">
+                            <small style="color: #01579b; font-weight: 500;">
+                                📝 <strong>CRON格式:</strong> 分钟 小时 日期 月份 星期 (例: 0 9 * * 1-5 = 工作日上午9点)
+                            </small>
+                        </div>
+                    </div>
+
+                    <!-- 🔄 间隔模式界面 -->
+                    <div id="intervalModeDiv" style="margin-bottom: 1.5rem;">
+                        <label style="display: block; margin-bottom: 0.75rem; font-weight: 600; color: var(--text-primary);">⏰ 调度间隔</label>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <input type="number" id="editIntervalValue" min="1" step="1" 
+                                   style="flex: 1; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 1rem; transition: border-color 0.2s;"
+                                   placeholder="输入数值"
+                                   onfocus="this.style.borderColor='var(--primary-color)'"
+                                   onblur="this.style.borderColor='var(--border-color)'">
+                            <select id="editIntervalUnit" 
+                                    style="padding: 0.75rem; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: white; font-size: 1rem; cursor: pointer; transition: border-color 0.2s;"
+                                    onfocus="this.style.borderColor='var(--primary-color)'"
+                                    onblur="this.style.borderColor='var(--border-color)'">
+                                <option value="seconds">秒</option>
+                                <option value="minutes">分钟</option>
+                                <option value="hours">小时</option>
+                                <option value="days">天</option>
+                            </select>
+                        </div>
+                        <div style="margin-top: 0.75rem;">
+                            <label style="display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--text-primary); font-size: 0.9rem;">🎯 快速设置：</label>
+                            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                <button type="button" onclick="setQuickInterval(30, 'minutes')" class="button" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">30分钟</button>
+                                <button type="button" onclick="setQuickInterval(1, 'hours')" class="button" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">1小时</button>
+                                <button type="button" onclick="setQuickInterval(4, 'hours')" class="button" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">4小时</button>
+                                <button type="button" onclick="setQuickInterval(6, 'hours')" class="button" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">6小时</button>
+                                <button type="button" onclick="setQuickInterval(12, 'hours')" class="button" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">12小时</button>
+                                <button type="button" onclick="setQuickInterval(1, 'days')" class="button" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">1天</button>
+                                <button type="button" onclick="setQuickInterval(3, 'days')" class="button" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color);">3天</button>
+                            </div>
+                        </div>
+                        <div style="margin-top: 0.75rem; padding: 0.75rem; background: #fef3c7; border-radius: var(--radius-md); border-left: 4px solid var(--warning-color);">
+                            <small style="color: #92400e; font-weight: 500;">
+                                💡 <strong>建议:</strong> 一般任务建议4-6小时，数据密集型任务建议1-2天
+                            </small>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 2rem;">
+                        <button onclick="closeTaskConfigEditModal()" 
+                                class="button" 
+                                style="background: var(--text-secondary); color: white; padding: 0.75rem 1.5rem;">取消</button>
+                        <button onclick="saveTaskConfigEdit()" 
+                                class="button button-primary" 
+                                style="padding: 0.75rem 1.5rem;">💾 保存修改</button>
+                    </div>
+                </div>
+            `;
+
+            // 点击模态框外部关闭
+            modal.onclick = (e) => {
+                if (e.target === modal) {
+                    closeTaskConfigEditModal();
+                }
+            };
+
+            document.body.appendChild(modal);
+            return modal;
+        }
+
+        // 关闭编辑模态框
+        function closeTaskConfigEditModal() {
+            const modal = document.getElementById('taskConfigEditModal');
+            if (modal) {
+                modal.style.display = 'none';
+            }
+            currentEditingTaskKey = null;
+        }
+
+        // 保存任务配置编辑
+        function saveTaskConfigEdit() {
+            const scheduleMode = document.getElementById('scheduleMode').value;
+            let updates = {};
+
+            if (scheduleMode === 'cron') {
+                // 🚀 CRON模式
+                const cronExpr = document.getElementById('cronInput').value.trim();
+                
+                if (!cronExpr) {
+                    showResult('❌ 请输入CRON表达式', 'error');
+                    return;
+                }
+
+                // 验证CRON表达式
+                if (!isValidCronExpression(cronExpr)) {
+                    showResult('❌ CRON表达式格式无效，请检查格式', 'error');
+                    return;
+                }
+
+                updates.schedule_cron = cronExpr;
+                updates.schedule_interval = null; // 清空interval
+                
+            } else {
+                // 🔄 间隔模式
+                const value = parseInt(document.getElementById('editIntervalValue').value);
+                const unit = document.getElementById('editIntervalUnit').value;
+
+                if (!value || value <= 0) {
+                    showResult('❌ 请输入有效的数值', 'error');
+                    return;
+                }
+
+                // 转换为秒
+                let seconds = value;
+                switch (unit) {
+                    case 'minutes':
+                        seconds = value * 60;
+                        break;
+                    case 'hours':
+                        seconds = value * 3600;
+                        break;
+                    case 'days':
+                        seconds = value * 86400;
+                        break;
+                }
+
+                // 验证合理范围
+                if (seconds < 60) {
+                    showResult('❌ 调度间隔不能少于1分钟', 'error');
+                    return;
+                }
+
+                if (seconds > 86400 * 30) {
+                    showResult('❌ 调度间隔不能超过30天', 'error');
+                    return;
+                }
+
+                updates.schedule_interval = seconds;
+                updates.schedule_cron = null; // 清空cron
+            }
+
+            updateTaskConfig(currentEditingTaskKey, updates);
+            closeTaskConfigEditModal();
+        }
+
+        // 快速设置时间间隔
+        function setQuickInterval(value, unit) {
+            document.getElementById('editIntervalValue').value = value;
+            document.getElementById('editIntervalUnit').value = unit;
+            
+            // 添加视觉反馈
+            const input = document.getElementById('editIntervalValue');
+            const select = document.getElementById('editIntervalUnit');
+            
+            input.style.borderColor = 'var(--success-color)';
+            select.style.borderColor = 'var(--success-color)';
+            
+            setTimeout(() => {
+                input.style.borderColor = 'var(--border-color)';
+                select.style.borderColor = 'var(--border-color)';
+            }, 1000);
+        }
+
+        // 全局变量
+        let currentEditingTaskKey = null;
+        let currentTaskConfigs = [];
+
+        // 更新任务配置
+        async function updateTaskConfig(taskKey, updates) {
+            try {
+                const result = await apiRequest(`/api/v1/tasks/configs/${taskKey}`, 'PUT', updates);
+                if (result && result.success) {
+                    showResult(`✅ ${result.message}`, 'success');
+                    // 刷新表格
+                    setTimeout(() => refreshTaskConfigs(), 500);
+                } else {
+                    showResult(`❌ 更新失败: ${result?.message || '未知错误'}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ 网络错误: ${error.message}`, 'error');
+            }
+        }
+
+        // 🚀 ==================== CRON功能相关函数 ====================
+
+        // 切换调度模式
+        function toggleScheduleMode() {
+            const scheduleMode = document.getElementById('scheduleMode').value;
+            if (scheduleMode === 'cron') {
+                showCronMode();
+            } else {
+                showIntervalMode();
+            }
+        }
+
+        // 显示CRON模式界面
+        function showCronMode() {
+            document.getElementById('cronModeDiv').style.display = 'block';
+            document.getElementById('intervalModeDiv').style.display = 'none';
+            
+            // 触发一次验证以显示当前状态
+            setTimeout(() => validateCronExpression(), 100);
+        }
+
+        // 显示间隔模式界面
+        function showIntervalMode() {
+            document.getElementById('cronModeDiv').style.display = 'none';
+            document.getElementById('intervalModeDiv').style.display = 'block';
+        }
+
+        // 设置CRON示例
+        function setCronExample(cronExpr) {
+            document.getElementById('cronInput').value = cronExpr;
+            validateCronExpression();
+        }
+
+        // 验证CRON表达式（前端简单验证）
+        function isValidCronExpression(cronExpr) {
+            if (!cronExpr || !cronExpr.trim()) return false;
+            
+            const parts = cronExpr.trim().split(/\s+/);
+            if (parts.length !== 5) return false;
+            
+            // 简单的字段验证
+            const ranges = [
+                [0, 59],  // 分钟
+                [0, 23],  // 小时
+                [1, 31],  // 日
+                [1, 12],  // 月
+                [0, 6]    // 周
+            ];
+            
+            for (let i = 0; i < parts.length; i++) {
+                const field = parts[i];
+                if (field === '*') continue;
+                
+                // 验证数值范围（简化版）
+                if (/^\d+$/.test(field)) {
+                    const num = parseInt(field);
+                    if (num < ranges[i][0] || num > ranges[i][1]) {
+                        return false;
+                    }
+                }
+                // 其他格式（范围、列表、步长）暂时认为有效
+            }
+            
+            return true;
+        }
+
+        // 实时验证CRON表达式
+        async function validateCronExpression() {
+            const cronInput = document.getElementById('cronInput');
+            const cronValidation = document.getElementById('cronValidation');
+            const cronPreview = document.getElementById('cronPreview');
+            
+            const cronExpr = cronInput.value.trim();
+            
+            if (!cronExpr) {
+                cronValidation.innerHTML = '';
+                cronPreview.innerHTML = '';
+                cronInput.style.borderColor = 'var(--border-color)';
+                return;
+            }
+            
+            // 前端快速验证
+            if (!isValidCronExpression(cronExpr)) {
+                cronValidation.innerHTML = `
+                    <div style="padding: 0.5rem; background: #fee2e2; border-radius: var(--radius-md); border-left: 4px solid #dc2626;">
+                        <small style="color: #dc2626; font-weight: 500;">❌ 格式错误：CRON表达式必须包含5个字段</small>
+                    </div>
+                `;
+                cronPreview.innerHTML = '';
+                cronInput.style.borderColor = '#dc2626';
+                return;
+            }
+            
+            // 调用后端验证API
+            try {
+                const response = await apiRequest('/api/v1/tasks/validate-cron', 'POST', {
+                    cron_expression: cronExpr
+                });
+                
+                if (response && response.success) {
+                    // 验证成功
+                    cronValidation.innerHTML = `
+                        <div style="padding: 0.5rem; background: #dcfce7; border-radius: var(--radius-md); border-left: 4px solid #16a34a;">
+                            <small style="color: #16a34a; font-weight: 500;">✅ ${response.message}</small>
+                        </div>
+                    `;
+                    
+                    // 显示描述和预览时间
+                    let previewHtml = '';
+                    if (response.description) {
+                        previewHtml += `<div style="margin-bottom: 0.5rem;"><strong>描述：</strong>${response.description}</div>`;
+                    }
+                    if (response.next_runs && response.next_runs.length > 0) {
+                        previewHtml += `
+                            <div><strong>接下来执行时间：</strong></div>
+                            <ul style="margin: 0.25rem 0; padding-left: 1.25rem; font-size: 0.9rem; color: var(--text-secondary);">
+                                ${response.next_runs.map(time => `<li>${time}</li>`).join('')}
+                            </ul>
+                        `;
+                    }
+                    
+                    cronPreview.innerHTML = `
+                        <div style="padding: 0.75rem; background: #f0f9ff; border-radius: var(--radius-md); border: 1px solid #0ea5e9;">
+                            <div style="font-size: 0.9rem; color: #0369a1;">${previewHtml}</div>
+                        </div>
+                    `;
+                    
+                    cronInput.style.borderColor = '#16a34a';
+                    
+                } else {
+                    // 验证失败
+                    cronValidation.innerHTML = `
+                        <div style="padding: 0.5rem; background: #fee2e2; border-radius: var(--radius-md); border-left: 4px solid #dc2626;">
+                            <small style="color: #dc2626; font-weight: 500;">❌ ${response.message || '验证失败'}</small>
+                        </div>
+                    `;
+                    cronPreview.innerHTML = '';
+                    cronInput.style.borderColor = '#dc2626';
+                }
+                
+            } catch (error) {
+                console.warn('CRON验证API调用失败:', error);
+                // API调用失败时，使用前端验证结果
+                cronValidation.innerHTML = `
+                    <div style="padding: 0.5rem; background: #dcfce7; border-radius: var(--radius-md); border-left: 4px solid #16a34a;">
+                        <small style="color: #16a34a; font-weight: 500;">✅ 基本格式验证通过</small>
+                    </div>
+                `;
+                cronPreview.innerHTML = '';
+                cronInput.style.borderColor = '#16a34a';
+            }
+        }
+
+
+
+
+
+
+
+        // 获取任务类型标签颜色
+        function getTaskTypeBadgeColor(type) {
+            const colors = {
+                'batch_analysis': '#1976d2',
+                'manual_analysis': '#7b1fa2',
+                'manual_extraction': '#f57c00',
+                'full_task': '#4caf50',
+                'full_task_range': '#2e7d32',
+                'cleanup': '#d32f2f'
+            };
+            return colors[type] || '#616161';
+        }
+
+        // 获取任务类型标签文本
+        function getTaskTypeLabel(type) {
+            const labels = {
+                'batch_analysis': '定时分析',
+                'manual_analysis': '手动分析',
+                'manual_extraction': '手动抽取',
+                'full_task': '完整流程',
+                'full_task_range': '自定义范围',
+                'cleanup': '清理任务'
+            };
+            return labels[type] || type;
+        }
+
+        // 获取状态标签颜色
+        function getStatusBadgeColor(status) {
+            const colors = {
+                'running': '#1976d2',
+                'completed': '#2e7d32',
+                'failed': '#c62828',
+                'cancelled': '#7b1fa2'
+            };
+            return colors[status] || '#616161';
+        }
+
+        // 获取状态标签文本
+        function getStatusLabel(status) {
+            const labels = {
+                'running': '运行中',
+                'completed': '已完成',
+                'failed': '失败',
+                'cancelled': '已取消'
+            };
+            return labels[status] || status;
+        }
+
+        // 格式化日期时间
+        function formatDateTime(dateString) {
+            if (!dateString) return '-';
+            const date = new Date(dateString);
+            return date.toLocaleString('zh-CN', {
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        // 格式化调度显示
+        function formatScheduleDisplay(config) {
+            if (!config) return '-';
+            
+            // 优先使用后端已格式化的显示
+            if (config.schedule_display) {
+                return config.schedule_display;
+            }
+            
+            // 如果有CRON表达式，显示CRON
+            if (config.schedule_cron) {
+                return `CRON: ${config.schedule_cron}`;
+            }
+            
+            // 根据间隔时间格式化显示
+            if (config.schedule_interval) {
+                const interval = config.schedule_interval;
+                if (interval < 60) {
+                    return `间隔: ${interval}秒`;
+                } else if (interval < 3600) {
+                    const minutes = Math.floor(interval / 60);
+                    return `间隔: ${minutes}分钟`;
+                } else if (interval < 86400) {
+                    const hours = Math.floor(interval / 3600);
+                    return `间隔: ${hours}小时`;
+                } else {
+                    const days = Math.floor(interval / 86400);
+                    return `间隔: ${days}天`;
+                }
+            }
+            
+            return '-';
+        }
+
+        // 格式化持续时间
+        function formatDuration(seconds) {
+            if (!seconds) return '-';
+            
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            
+            if (hours > 0) {
+                return `${hours}h${minutes}m`;
+            } else if (minutes > 0) {
+                return `${minutes}m${secs}s`;
+            } else {
+                return `${secs}s`;
+            }
+        }
+
+        // 格式化间隔时间
+        function formatInterval(seconds) {
+            if (!seconds) return '-';
+            
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            
+            if (hours > 0) {
+                if (hours >= 24) {
+                    const days = Math.floor(hours / 24);
+                    const remainingHours = hours % 24;
+                    return remainingHours > 0 ? `${days}天${remainingHours}小时` : `${days}天`;
+                }
+                return `${hours}小时`;
+            } else if (minutes > 0) {
+                return `${minutes}分钟`;
+            } else {
+                return `${seconds}秒`;
+            }
+        }
+
+        // 获取任务处理器标签颜色
+        function getTaskHandlerBadgeColor(handler) {
+            const colors = {
+                'batch_analysis': '#1976d2',
+                'cleanup': '#d32f2f',
+                'manual_analysis': '#7b1fa2',
+                'extraction': '#f57c00'
+            };
+            return colors[handler] || '#616161';
+        }
+
+        // 获取任务处理器标签文本
+        function getTaskHandlerLabel(handler) {
+            const labels = {
+                'batch_analysis': '批量分析',
+                'cleanup': '数据清理',
+                'manual_analysis': '手动分析',
+                'extraction': '数据抽取'
+            };
+            return labels[handler] || handler;
+        }
+
+        // 自动设置API基础地址
+        function autoSetBaseUrl() {
+            const currentHost = window.location.hostname;
+            const currentPort = window.location.port;
+            const protocol = window.location.protocol;
+            
+            // 如果当前页面有端口号，则使用当前端口
+            if (currentPort) {
+                const autoUrl = `${protocol}//${currentHost}:${currentPort}`;
+                document.getElementById('baseUrl').value = autoUrl;
+            }
+        }
+
+        // 简单的健康检查
+        async function checkSystemHealth() {
+            try {
+                await apiRequest('/health');
+            } catch (error) {
+                console.log('系统健康检查失败:', error);
+            }
+        }
+
+        // 检查用户登录状态
+        async function checkAuthStatus() {
+            const token = localStorage.getItem('auth_token');
+            if (!token) {
+                window.location.href = '/static/login.html';
+                return false;
+            }
+
+            try {
+                const response = await fetch('/api/v1/auth/verify', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Token verification failed');
+                }
+
+                const result = await response.json();
+                if (!result.success) {
+                    throw new Error('Invalid token');
+                }
+
+                // 显示用户信息
+                const username = localStorage.getItem('username') || result.username;
+                const userInfo = document.createElement('div');
+                userInfo.innerHTML = `
+                    <div style="position: fixed; top: 10px; right: 10px; background: var(--bg-primary); padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid var(--border-color); font-size: 0.9rem; z-index: 1000;">
+                        <span style="color: var(--text-secondary);">欢迎，</span>
+                        <strong style="color: var(--text-primary);">${username}</strong>
+                        <button onclick="logout()" style="margin-left: 0.5rem; padding: 0.25rem 0.5rem; font-size: 0.8rem; background: var(--error-color); color: white; border: none; border-radius: 4px; cursor: pointer;">
+                            登出
+                        </button>
+                    </div>
+                `;
+                document.body.appendChild(userInfo);
+
+                return true;
+            } catch (error) {
+                console.error('Auth check failed:', error);
+                localStorage.removeItem('auth_token');
+                localStorage.removeItem('username');
+                window.location.href = '/static/login.html';
+                return false;
+            }
+        }
+
+        // 登出功能
+        async function logout() {
+            const confirmed = confirm('确认登出吗？');
+            if (!confirmed) return;
+
+            try {
+                await fetch('/api/v1/auth/logout', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+                    }
+                });
+            } catch (error) {
+                console.log('Logout request failed, but continuing...');
+            }
+
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('username');
+            window.location.href = '/static/login.html';
+        }
+
+        // 🔥 新增：任务状态轮询相关函数
+        
+        /**
+         * 启动任务状态轮询
+         * @param {string} taskId - 任务ID
+         * @param {string} taskKey - 任务键名
+         */
+        async function startTaskPolling(taskId, taskKey) {
+            console.log(`🔄 开始轮询任务状态: ${taskId}`);
+            
+            // 清除之前的轮询
+            if (pollingIntervals.has(taskId)) {
+                clearInterval(pollingIntervals.get(taskId));
+            }
+            
+            isPollingActive = true;
+            updatePollingStatusDisplay();
+            
+            // 立即执行一次状态检查
+            await checkTaskStatus(taskId, taskKey);
+            
+            // 设置定时轮询（每5秒检查一次，避免触发限流）
+            const intervalId = setInterval(async () => {
+                try {
+                    await checkTaskStatus(taskId, taskKey);
+                } catch (error) {
+                    console.error(`轮询任务状态失败: ${taskId}`, error);
+                    stopTaskPolling(taskId);
+                }
+            }, 5000);
+            
+            pollingIntervals.set(taskId, intervalId);
+        }
+        
+        /**
+         * 检查单个任务状态
+         * @param {string} taskId - 任务ID
+         * @param {string} taskKey - 任务键名
+         */
+        async function checkTaskStatus(taskId, taskKey) {
+            try {
+                const result = await apiRequest(`/api/v1/tasks/records/${taskId}`, 'GET');
+                
+                if (result && result.success && result.data) {
+                    const taskData = result.data;
+                    const status = taskData.status;
+                    const completionRate = taskData.completion_rate || 0;
+                    const processStage = taskData.process_stage || '未知阶段';
+                    
+                    // 更新进度显示
+                    updateTaskProgressDisplay(taskId, taskKey, taskData);
+                    
+                    // 检查任务是否完成
+                    if (status === 'completed') {
+                        stopTaskPolling(taskId);
+                        showTaskCompletionResult(taskId, taskKey, taskData);
+                    } else if (status === 'failed' || status === 'cancelled') {
+                        stopTaskPolling(taskId);
+                        showTaskFailureResult(taskId, taskKey, taskData);
+                    }
+                    
+                    // 刷新任务列表
+                    refreshTaskConfigs();
+                } else {
+                    console.warn(`无法获取任务状态: ${taskId}`);
+                }
+            } catch (error) {
+                console.error(`检查任务状态失败: ${taskId}`, error);
+                throw error;
+            }
+        }
+        
+        /**
+         * 停止任务轮询
+         * @param {string} taskId - 任务ID
+         */
+        function stopTaskPolling(taskId) {
+            if (pollingIntervals.has(taskId)) {
+                clearInterval(pollingIntervals.get(taskId));
+                pollingIntervals.delete(taskId);
+                console.log(`⏹️ 停止轮询任务状态: ${taskId}`);
+            }
+            
+            // 检查是否还有其他轮询在运行
+            if (pollingIntervals.size === 0) {
+                isPollingActive = false;
+                updatePollingStatusDisplay();
+            }
+        }
+        
+        /**
+         * 停止所有轮询
+         */
+        function stopAllPolling() {
+            pollingIntervals.forEach((intervalId, taskId) => {
+                clearInterval(intervalId);
+                console.log(`⏹️ 停止轮询任务状态: ${taskId}`);
+            });
+            pollingIntervals.clear();
+            isPollingActive = false;
+            updatePollingStatusDisplay();
+        }
+        
+        /**
+         * 更新轮询状态显示
+         */
+        function updatePollingStatusDisplay() {
+            const statusElement = document.getElementById('pollingStatus');
+            if (statusElement) {
+                if (isPollingActive && pollingIntervals.size > 0) {
+                    statusElement.style.display = 'block';
+                    const countText = pollingIntervals.size > 1 ? `(${pollingIntervals.size}个任务)` : '';
+                    const textSpan = statusElement.querySelector('span:nth-child(2)');
+                    if (textSpan) {
+                        textSpan.textContent = `正在监控任务进度... ${countText}`;
+                    }
+                } else {
+                    statusElement.style.display = 'none';
+                }
+            }
+        }
+        
+        /**
+         * 更新任务进度显示
+         * @param {string} taskId - 任务ID
+         * @param {string} taskKey - 任务键名
+         * @param {object} taskData - 任务数据
+         */
+        function updateTaskProgressDisplay(taskId, taskKey, taskData) {
+            const successRecords = taskData.success_records || 0;
+            const failedRecords = taskData.failed_records || 0;
+            const skippedRecords = taskData.skipped_records || 0;
+            const totalRecords = taskData.total_records || 0;
+            
+            // 🔥 修复进度计算逻辑：完全使用后端计算的completion_rate，不在前端重新计算
+            // 后端已经正确处理了各种边界情况（总数为0、抽取阶段跳过等）
+            const completionRate = taskData.completion_rate || 0;
+            
+            const processStage = taskData.process_stage || '处理中';
+            
+            // 计算当前耗时
+            let currentDuration = '';
+            if (taskData.start_time) {
+                const startTime = new Date(taskData.start_time);
+                const now = new Date();
+                const durationSeconds = Math.floor((now - startTime) / 1000);
+                currentDuration = `\n⏱️ 当前耗时: ${formatDuration(durationSeconds)}`;
+            }
+            
+            // 构建进度信息
+            let progressInfo = `📊 任务进度更新 (${taskId.substring(0, 16)}...)\n`;
+            progressInfo += `🔄 当前阶段: ${processStage}\n`;
+            progressInfo += `📈 完成进度: ${completionRate.toFixed(1)}%`;
+            progressInfo += currentDuration;
+            
+            if (totalRecords > 0) {
+                progressInfo += `\n📋 处理统计:\n`;
+                progressInfo += `  ✅ 成功: ${successRecords} 条\n`;
+                progressInfo += `  ❌ 失败: ${failedRecords} 条\n`;
+                if (skippedRecords > 0) {
+                    progressInfo += `  ⏭️ 跳过: ${skippedRecords} 条\n`;
+                }
+                progressInfo += `  📊 总计: ${totalRecords} 条`;
+                
+                // 🔥 新增：显示重复数据统计
+                const duplicateRecords = taskData.duplicate_records || 0;
+                const extractedRecords = taskData.extracted_records || 0;
+                if (duplicateRecords > 0 && extractedRecords > 0) {
+                    const duplicateRate = (duplicateRecords / extractedRecords * 100).toFixed(1);
+                    progressInfo += `\n🔄 数据抽取统计:\n`;
+                    progressInfo += `  📥 抽取总量: ${extractedRecords} 条\n`;
+                    progressInfo += `  🆕 新增数据: ${totalRecords} 条\n`;
+                    progressInfo += `  🔁 重复过滤: ${duplicateRecords} 条 (${duplicateRate}%)`;
+                }
+            }
+            
+            // 在结果区域显示进度
+            showResult(progressInfo, 'info');
+        }
+        
+        /**
+         * 显示任务完成结果
+         * @param {string} taskId - 任务ID
+         * @param {string} taskKey - 任务键名
+         * @param {object} taskData - 任务数据
+         */
+        function showTaskCompletionResult(taskId, taskKey, taskData) {
+            const successRecords = taskData.success_records || 0;
+            const failedRecords = taskData.failed_records || 0;
+            const skippedRecords = taskData.skipped_records || 0;
+            const totalRecords = taskData.total_records || 0;
+            const durationSeconds = taskData.duration_seconds || 0;
+            const durationText = durationSeconds > 0 ? `\n⏱️ 执行时长: ${Math.round(durationSeconds)}秒` : '';
+            
+            let completionMessage = `🎉 任务执行完成！\n`;
+            completionMessage += `📋 任务ID: ${taskId}\n`;
+            completionMessage += `📊 最终统计:\n`;
+            completionMessage += `  ✅ 成功: ${successRecords} 条\n`;
+            completionMessage += `  ❌ 失败: ${failedRecords} 条\n`;
+            if (skippedRecords > 0) {
+                completionMessage += `  ⏭️ 跳过: ${skippedRecords} 条\n`;
+            }
+            completionMessage += `  📊 总计: ${totalRecords} 条`;
+            completionMessage += durationText;
+            
+            showResult(completionMessage, 'success');
+        }
+        
+        /**
+         * 显示任务失败结果
+         * @param {string} taskId - 任务ID
+         * @param {string} taskKey - 任务键名
+         * @param {object} taskData - 任务数据
+         */
+        function showTaskFailureResult(taskId, taskKey, taskData) {
+            const status = taskData.status;
+            const errorMessage = taskData.error_message || '未知错误';
+            const durationSeconds = taskData.duration_seconds || 0;
+            const durationText = durationSeconds > 0 ? `\n⏱️ 执行时长: ${Math.round(durationSeconds)}秒` : '';
+            
+            let failureMessage = `❌ 任务执行${status === 'cancelled' ? '已取消' : '失败'}！\n`;
+            failureMessage += `📋 任务ID: ${taskId}\n`;
+            failureMessage += `📝 错误信息: ${errorMessage}`;
+            failureMessage += durationText;
+            
+            showResult(failureMessage, 'error');
+        }
+        
+        /**
+         * 检查正在运行的任务（仅用于显示状态，不自动开启轮询）
+         */
+        async function checkForRunningTasks() {
+            try {
+                console.log('🔍 检查正在运行的任务...');
+                const result = await apiRequest('/api/v1/tasks/records?status=running&limit=10', 'GET');
+                
+                if (result && result.success && result.data && result.data.length > 0) {
+                    console.log(`📋 发现 ${result.data.length} 个正在运行的任务`);
+                    // 只显示状态，不自动开启轮询 - 用户需要手动点击查看记录来监控
+                } else {
+                    console.log('📋 没有发现正在运行的任务');
+                }
+            } catch (error) {
+                console.error('检查运行中任务失败:', error);
+            }
+        }
+
+        // 页面卸载时停止所有轮询
+        window.addEventListener('beforeunload', function() {
+            stopAllPolling();
+        });
+
+        
+        window.addEventListener('load', async function() {
+            // 首先检查认证状态
+            const isAuthenticated = await checkAuthStatus();
+            if (!isAuthenticated) return;
+
+            autoSetBaseUrl();
+            checkSystemHealth();
+            // 🔥 新增：加载总开关状态
+            loadMasterSwitchStatus();
+            // 自动加载任务配置和系统监控
+            setTimeout(() => {
+                refreshTaskConfigs();
+                refreshSystemMonitor();
+                // 检查正在运行的任务状态（不自动开启轮询）
+                checkForRunningTasks();
+            }, 1000);
+        });
+    </script>
+</body>
+</html>

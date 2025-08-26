@@ -1,0 +1,63 @@
+[Unit]
+Description=AI Platform Smart Analysis System
+Documentation=https://github.com/your-repo/ai-platform-smart
+After=network.target mysql.service
+Wants=mysql.service
+Requires=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/ai-platform-smart
+Environment=ENVIRONMENT=prod
+Environment=PYTHONPATH=/opt/ai-platform-smart
+Environment=PATH=/opt/ai-platform-smart/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# 启动命令
+ExecStart=/opt/ai-platform-smart/venv/bin/python main.py --env prod --host 0.0.0.0 --port 8993 --mode api
+ExecReload=/bin/kill -HUP $MAINPID
+
+# 重启配置
+Restart=always
+RestartSec=10
+TimeoutStartSec=60
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-platform-smart
+
+# 安全配置（root用户运行时适当放宽）
+NoNewPrivileges=false
+ProtectSystem=false
+ProtectHome=false
+ReadWritePaths=/opt/ai-platform-smart
+PrivateTmp=false
+PrivateDevices=false
+ProtectControlGroups=false
+ProtectKernelModules=false
+ProtectKernelTunables=false
+RestrictRealtime=false
+RestrictSUIDSGID=false
+MemoryAccounting=true
+TasksAccounting=true
+
+# 资源限制
+LimitNOFILE=65536
+LimitNPROC=4096
+MemoryMax=1G
+MemoryHigh=800M
+TasksMax=2048
+CPUQuota=150%
+CPUWeight=100
+IOWeight=100
+
+# 工作目录和文件权限
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target
