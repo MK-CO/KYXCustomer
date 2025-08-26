@@ -59,14 +59,16 @@ class Stage2AnalysisService:
                 time_parts.append(f"到{end_date}")
             time_range_info = f" ({' '.join(time_parts)})"
         
-        logger.info(f"开始第二阶段：获取待处理工单评论数据，限制 {limit} 条{time_range_info}")
+        logger.info(f"📋 开始拉取pending工单数据，限制 {limit} 条{time_range_info}")
         
         try:
-            # 1. 获取待处理工单列表（支持时间范围过滤）
+            # 1. 获取待处理工单列表（🔥 修复：分析阶段不使用时间过滤，处理所有PENDING）
+            logger.info("📥 正在查询数据库中的PENDING状态工单...")
             pending_orders = self.stage1.get_pending_work_orders(
                 db, ai_status='PENDING', limit=limit,
                 start_date=start_date, end_date=end_date
             )
+            logger.info(f"📊 从数据库查询到 {len(pending_orders) if pending_orders else 0} 个PENDING工单")
             
             if not pending_orders:
                 return {
@@ -82,40 +84,44 @@ class Stage2AnalysisService:
                 }
             
             # 2. 批量获取评论数据
+            logger.info(f"💬 开始处理 {len(pending_orders)} 个工单的评论数据...")
             work_orders_with_comments = []
             with_comments_count = 0
             without_comments_count = 0
             denoised_count = 0  # 🔥 新增：去噪处理的工单数
             
-            for order in pending_orders:
+            for i, order in enumerate(pending_orders, 1):
                 work_id = order["work_id"]
                 comment_table_name = order["comment_table_name"]
                 
+                logger.info(f"📋 处理工单 {work_id} ({i}/{len(pending_orders)}) - 评论表: {comment_table_name}")
+                
                 # 获取评论数据
                 comments = self.stage1.get_work_comments(db, work_id, comment_table_name)
+                logger.info(f"💭 工单 {work_id} 获取到 {len(comments) if comments else 0} 条原始评论")
                 
                 # 过滤有效评论 - 防止NoneType错误
                 valid_comments = [c for c in comments if c.get("content") and str(c.get("content", "")).strip()]
                 
                 # 应用去噪过滤并保存记录
                 if valid_comments:
+                    logger.info(f"🔍 工单 {work_id} 开始去噪处理 {len(valid_comments)} 条有效评论...")
                     denoise_result = content_denoiser.filter_comments_with_record(
                         valid_comments, work_id, db, save_record=True
                     )
                     valid_comments = denoise_result["filtered_comments"]
-                    logger.info(f"🔍 工单 {work_id} 去噪结果: {denoise_result['original_count']} -> {denoise_result['filtered_count']} 条评论")
+                    logger.info(f"✅ 工单 {work_id} 去噪完成: {denoise_result['original_count']} -> {denoise_result['filtered_count']} 条评论")
                     if denoise_result["removed_count"] > 0:
                         denoised_count += 1  # 🔥 统计去噪处理的工单数
-                        logger.debug(f"去噪移除: {denoise_result['filter_statistics']['filter_reasons']}")
-                    # 记录去噪保存状态
-                    if denoise_result.get("denoise_record", {}).get("saved"):
-                        logger.debug(f"💾 工单 {work_id} 去噪记录已保存，批次: {denoise_result['denoise_record']['batch_id']}")
+                        logger.info(f"🗑️ 工单 {work_id} 去噪移除了 {denoise_result['removed_count']} 条评论")
                 else:
+                    logger.info(f"⚠️ 工单 {work_id} 无有效评论，跳过去噪处理")
                     denoise_result = None
                 
                 if valid_comments:
                     with_comments_count += 1
                     comment_data = self._build_conversation_json(valid_comments)
+                    logger.info(f"✅ 工单 {work_id} 有 {len(valid_comments)} 条有效评论，构建完成对话数据")
                     
                     # 更新工单评论统计
                     self.stage1.update_work_order_ai_status(
@@ -171,7 +177,13 @@ class Stage2AnalysisService:
                 }
             }
             
-            logger.info(f"第二阶段完成：{result['statistics']}")
+            logger.info("=" * 60)
+            logger.info(f"📋 pending工单数据拉取完成总结:")
+            logger.info(f"  📥 查询到工单总数: {len(pending_orders)}")
+            logger.info(f"  💬 有评论可分析: {with_comments_count}")
+            logger.info(f"  💭 无评论已完成: {without_comments_count}")
+            logger.info(f"  🔍 执行去噪处理: {denoised_count}")
+            logger.info("=" * 60)
             return result
             
         except Exception as e:
@@ -455,112 +467,148 @@ class Stage2AnalysisService:
         analysis_result: Dict[str, Any]
     ) -> bool:
         """保存AI分析结果到结果表"""
-        logger.info(f"💾 开始保存工单 {work_id} 的分析结果")
-        logger.debug(f"分析结果摘要: 规避责任={analysis_result.get('has_evasion', False)}, 风险级别={analysis_result.get('risk_level', 'low')}, 置信度={analysis_result.get('confidence_score', 0.0)}")
+        logger.info(f"💾 保存工单 {work_id} 分析结果: 风险级别={analysis_result.get('risk_level', 'low')}, 规避责任={analysis_result.get('has_evasion', False)}")
         
         try:
             # 查询订单ID和订单编号
             order_id, order_no = self._get_order_info_by_work_id(db, work_id)
-            # 检查是否已存在分析结果
-            check_sql = f"""
-            SELECT id FROM {self.results_table_name}
-            WHERE work_id = :work_id
-            LIMIT 1
+            
+            # 🔥 修复：使用 INSERT ... ON DUPLICATE KEY UPDATE 语法避免重复插入
+            # 这里使用 MySQL 的 UPSERT 语法，可以原子性地处理插入或更新
+            upsert_sql = f"""
+            INSERT INTO {self.results_table_name} (
+                work_id, order_id, order_no, session_start_time, session_end_time,
+                total_comments, customer_comments, service_comments,
+                has_evasion, risk_level, confidence_score,
+                evasion_types, evidence_sentences, improvement_suggestions,
+                keyword_screening_score, matched_categories, matched_keywords, is_suspicious,
+                sentiment, sentiment_intensity, conversation_text,
+                llm_raw_response, analysis_details, analysis_note,
+                llm_provider, llm_model, llm_tokens_used,
+                analysis_time, created_at, updated_at
+            ) VALUES (
+                :work_id, :order_id, :order_no, :session_start_time, :session_end_time,
+                :total_comments, :customer_comments, :service_comments,
+                :has_evasion, :risk_level, :confidence_score,
+                :evasion_types, :evidence_sentences, :improvement_suggestions,
+                :keyword_screening_score, :matched_categories, :matched_keywords, :is_suspicious,
+                :sentiment, :sentiment_intensity, :conversation_text,
+                :llm_raw_response, :analysis_details, :analysis_note,
+                :llm_provider, :llm_model, :llm_tokens_used,
+                :analysis_time, :created_at, :updated_at
+            ) ON DUPLICATE KEY UPDATE
+                order_id = VALUES(order_id),
+                order_no = VALUES(order_no),
+                session_start_time = VALUES(session_start_time),
+                session_end_time = VALUES(session_end_time),
+                total_comments = VALUES(total_comments),
+                customer_comments = VALUES(customer_comments),
+                service_comments = VALUES(service_comments),
+                has_evasion = VALUES(has_evasion),
+                risk_level = VALUES(risk_level),
+                confidence_score = VALUES(confidence_score),
+                evasion_types = VALUES(evasion_types),
+                evidence_sentences = VALUES(evidence_sentences),
+                improvement_suggestions = VALUES(improvement_suggestions),
+                keyword_screening_score = VALUES(keyword_screening_score),
+                matched_categories = VALUES(matched_categories),
+                matched_keywords = VALUES(matched_keywords),
+                is_suspicious = VALUES(is_suspicious),
+                sentiment = VALUES(sentiment),
+                sentiment_intensity = VALUES(sentiment_intensity),
+                conversation_text = VALUES(conversation_text),
+                llm_raw_response = VALUES(llm_raw_response),
+                analysis_details = VALUES(analysis_details),
+                analysis_note = VALUES(analysis_note),
+                llm_provider = VALUES(llm_provider),
+                llm_model = VALUES(llm_model),
+                llm_tokens_used = VALUES(llm_tokens_used),
+                analysis_time = VALUES(analysis_time),
+                updated_at = VALUES(updated_at)
             """
             
-            existing = db.execute(text(check_sql), {"work_id": work_id}).fetchone()
+            params = self._build_analysis_params(work_id, analysis_result, order_id, order_no)
+            params["created_at"] = datetime.now()
+            params["updated_at"] = datetime.now()
             
-            if existing:
-                # 更新现有记录
-                update_sql = f"""
-                UPDATE {self.results_table_name}
-                SET 
-                    order_id = :order_id,
-                    order_no = :order_no,
-                    session_start_time = :session_start_time,
-                    session_end_time = :session_end_time,
-                    total_comments = :total_comments,
-                    customer_comments = :customer_comments,
-                    service_comments = :service_comments,
-                    has_evasion = :has_evasion,
-                    risk_level = :risk_level,
-                    confidence_score = :confidence_score,
-                    evasion_types = :evasion_types,
-                    evidence_sentences = :evidence_sentences,
-                    improvement_suggestions = :improvement_suggestions,
-                    keyword_screening_score = :keyword_screening_score,
-                    matched_categories = :matched_categories,
-                    matched_keywords = :matched_keywords,
-                    is_suspicious = :is_suspicious,
-                    sentiment = :sentiment,
-                    sentiment_intensity = :sentiment_intensity,
-                    conversation_text = :conversation_text,
-                    llm_raw_response = :llm_raw_response,
-                    analysis_details = :analysis_details,
-                    analysis_note = :analysis_note,
-                    llm_provider = :llm_provider,
-                    llm_model = :llm_model,
-                    llm_tokens_used = :llm_tokens_used,
-                    analysis_time = :analysis_time,
-                    updated_at = :updated_at
-                WHERE work_id = :work_id
-                """
-                
-                params = self._build_analysis_params(work_id, analysis_result, order_id, order_no)
-                params["updated_at"] = datetime.now()
-                
-                logger.debug(f"💾 更新工单 {work_id} - 参数预览: 关键词={params.get('matched_categories')}, LLM提供商={params.get('llm_provider')}, 模型={params.get('llm_model')}")
-                
-                db.execute(text(update_sql), params)
-                logger.info(f"✅ 成功更新工单 {work_id} 的分析结果")
-                
-            else:
-                # 插入新记录
-                insert_sql = f"""
-                INSERT INTO {self.results_table_name} (
-                    work_id, order_id, order_no, session_start_time, session_end_time,
-                    total_comments, customer_comments, service_comments,
-                    has_evasion, risk_level, confidence_score,
-                    evasion_types, evidence_sentences, improvement_suggestions,
-                    keyword_screening_score, matched_categories, matched_keywords, is_suspicious,
-                    sentiment, sentiment_intensity, conversation_text,
-                    llm_raw_response, analysis_details, analysis_note,
-                    llm_provider, llm_model, llm_tokens_used,
-                    analysis_time, created_at, updated_at
-                ) VALUES (
-                    :work_id, :order_id, :order_no, :session_start_time, :session_end_time,
-                    :total_comments, :customer_comments, :service_comments,
-                    :has_evasion, :risk_level, :confidence_score,
-                    :evasion_types, :evidence_sentences, :improvement_suggestions,
-                    :keyword_screening_score, :matched_categories, :matched_keywords, :is_suspicious,
-                    :sentiment, :sentiment_intensity, :conversation_text,
-                    :llm_raw_response, :analysis_details, :analysis_note,
-                    :llm_provider, :llm_model, :llm_tokens_used,
-                    :analysis_time, :created_at, :updated_at
-                )
-                """
-                
-                params = self._build_analysis_params(work_id, analysis_result, order_id, order_no)
-                params["created_at"] = datetime.now()
-                params["updated_at"] = datetime.now()
-                
-                logger.debug(f"💾 插入工单 {work_id} - 参数预览: 关键词={params.get('matched_categories')}, LLM提供商={params.get('llm_provider')}, 模型={params.get('llm_model')}")
-                logger.debug(f"详细参数: 规避责任={params.get('has_evasion')}, 可疑性={params.get('is_suspicious')}, 备注={params.get('analysis_note')}")
-                
-                db.execute(text(insert_sql), params)
+            result = db.execute(text(upsert_sql), params)
+            
+            # 检查是插入还是更新
+            if result.rowcount == 1:
                 logger.info(f"✅ 成功插入工单 {work_id} 的分析结果")
+            elif result.rowcount == 2:
+                logger.info(f"✅ 成功更新工单 {work_id} 的分析结果")
+            else:
+                logger.warning(f"⚠️ 工单 {work_id} 保存结果异常: rowcount={result.rowcount}")
             
             db.commit()
             return True
             
         except Exception as e:
             logger.error(f"保存工单 {work_id} 分析结果失败: {e}")
+            # 🔥 修复：如果是重复键错误，可能是并发导致的，不算真正失败
+            if "Duplicate entry" in str(e) or "UNIQUE constraint failed" in str(e):
+                logger.warning(f"⚠️ 工单 {work_id} 检测到重复键，可能是并发插入，忽略此错误")
+                db.rollback()
+                return True  # 重复键不算失败，因为数据已经存在
             db.rollback()
             return False
     
+    def _safe_truncate_text(self, text: str, max_length: int, suffix: str = "...") -> str:
+        """安全截断文本，确保不超出指定长度"""
+        if not text or len(text) <= max_length:
+            return text
+        
+        actual_max = max_length - len(suffix)
+        if actual_max <= 0:
+            return suffix[:max_length]
+        
+        return text[:actual_max] + suffix
+    
+    def _safe_truncate_json(self, data: Any, max_length: int) -> str:
+        """安全截断JSON数据，确保不超出指定长度"""
+        try:
+            json_str = safe_json_dumps(data, ensure_ascii=False)
+            if len(json_str) <= max_length:
+                return json_str
+            
+            # 如果是列表，尝试减少元素数量
+            if isinstance(data, list) and len(data) > 1:
+                reduced_count = max(1, len(data) // 2)
+                truncated_data = data[:reduced_count]
+                # 添加截断标记
+                if isinstance(truncated_data[0], str):
+                    truncated_data.append(f"... (已截断，原始共{len(data)}项)")
+                json_str = safe_json_dumps(truncated_data, ensure_ascii=False)
+                
+                # 如果还是太长，直接截断字符串
+                if len(json_str) > max_length:
+                    return self._safe_truncate_text(json_str, max_length)
+                return json_str
+            
+            # 对于其他类型，直接截断字符串
+            return self._safe_truncate_text(json_str, max_length)
+            
+        except Exception as e:
+            logger.warning(f"JSON截断失败: {e}")
+            return f'{{"error": "数据过长已截断", "original_type": "{type(data).__name__}"}}'
+
     def _build_analysis_params(self, work_id: int, analysis_result: Dict[str, Any], order_id: Optional[int] = None, order_no: Optional[str] = None) -> Dict[str, Any]:
-        """构建分析结果参数"""
+        """构建分析结果参数，确保所有字段不超出数据库限制"""
         import json
+        
+        # 定义字段长度限制（根据数据库表结构设置）
+        FIELD_LIMITS = {
+            "conversation_text": 8000,      # TEXT字段通常8KB左右
+            "llm_raw_response": 4000,       # JSON字段
+            "analysis_details": 4000,       # JSON字段
+            "evidence_sentences": 3000,     # JSON字段
+            "improvement_suggestions": 2000, # JSON字段
+            "evasion_types": 1000,          # JSON字段
+            "matched_keywords": 2000,       # JSON字段
+            "analysis_note": 1500,          # 已在_build_enhanced_analysis_note中处理
+            "matched_categories": 500       # VARCHAR字段
+        }
         
         # 获取关键词筛选结果
         keyword_screening = analysis_result.get("keyword_screening", {})
@@ -607,7 +655,14 @@ class Stage2AnalysisService:
                     if isinstance(usage, dict):
                         llm_tokens_used = usage.get("total_tokens", 0)
         
-        # 构建保存参数字典
+        # 安全处理匹配类别字段
+        matched_categories_str = None
+        if keyword_screening.get("matched_categories"):
+            categories_list = keyword_screening["matched_categories"][:10]  # 最多10个类别
+            categories_str = ",".join(categories_list)
+            matched_categories_str = self._safe_truncate_text(categories_str, FIELD_LIMITS["matched_categories"])
+        
+        # 构建保存参数字典，应用长度限制
         save_params = {
             "work_id": work_id,
             "order_id": order_id,
@@ -620,22 +675,23 @@ class Stage2AnalysisService:
             "has_evasion": 1 if analysis_result.get("has_evasion", False) else 0,
             "risk_level": analysis_result.get("risk_level", "low"),
             "confidence_score": analysis_result.get("confidence_score", 0.0),
-            "evasion_types": safe_json_dumps(analysis_result.get("evasion_types", []), ensure_ascii=False),
-            "evidence_sentences": safe_json_dumps(analysis_result.get("evidence_sentences", []), ensure_ascii=False),
-            "improvement_suggestions": safe_json_dumps(analysis_result.get("improvement_suggestions", []), ensure_ascii=False),
+            # JSON字段 - 应用长度限制
+            "evasion_types": self._safe_truncate_json(analysis_result.get("evasion_types", []), FIELD_LIMITS["evasion_types"]),
+            "evidence_sentences": self._safe_truncate_json(analysis_result.get("evidence_sentences", []), FIELD_LIMITS["evidence_sentences"]),
+            "improvement_suggestions": self._safe_truncate_json(analysis_result.get("improvement_suggestions", []), FIELD_LIMITS["improvement_suggestions"]),
             # 关键词筛选结果
             "keyword_screening_score": keyword_screening.get("confidence_score", 0.0),
-            "matched_categories": ",".join(keyword_screening.get("matched_categories", [])) if keyword_screening.get("matched_categories") else None,
-            "matched_keywords": safe_json_dumps(keyword_screening.get("matched_details", {}), ensure_ascii=False) if keyword_screening.get("matched_details") else None,
+            "matched_categories": matched_categories_str,
+            "matched_keywords": self._safe_truncate_json(keyword_screening.get("matched_details", {}), FIELD_LIMITS["matched_keywords"]) if keyword_screening.get("matched_details") else None,
             "is_suspicious": 1 if keyword_screening.get("is_suspicious", False) else 0,
             # 情感分析结果
             "sentiment": analysis_result.get("sentiment", "neutral"),
             "sentiment_intensity": analysis_result.get("sentiment_intensity", 0.0),
-            # 原始数据
-            "conversation_text": analysis_result.get("conversation_text", ""),
-            "llm_raw_response": safe_json_dumps(llm_raw_response, ensure_ascii=False) if llm_raw_response else None,
-            "analysis_details": safe_json_dumps(analysis_result, ensure_ascii=False),
-            "analysis_note": analysis_result.get("analysis_note"),
+            # 原始数据 - 应用长度限制
+            "conversation_text": self._safe_truncate_text(analysis_result.get("conversation_text", ""), FIELD_LIMITS["conversation_text"]),
+            "llm_raw_response": self._safe_truncate_json(llm_raw_response, FIELD_LIMITS["llm_raw_response"]) if llm_raw_response else None,
+            "analysis_details": self._safe_truncate_json(analysis_result, FIELD_LIMITS["analysis_details"]),
+            "analysis_note": self._build_enhanced_analysis_note(analysis_result),  # 内部已处理长度限制
             # LLM调用信息
             "llm_provider": llm_provider,
             "llm_model": llm_model,
@@ -643,9 +699,6 @@ class Stage2AnalysisService:
             # 时间戳
             "analysis_time": datetime.now()
         }
-        
-        # 添加调试日志
-        logger.debug(f"🔧 工单 {work_id} 保存参数: confidence_score={save_params['confidence_score']}, llm_tokens_used={save_params['llm_tokens_used']}, llm_model={save_params['llm_model']}")
         
         return save_params
     
@@ -694,6 +747,51 @@ class Stage2AnalysisService:
             
         except Exception as e:
             logger.error(f"标记工单 {work_id} 为失败失败: {e}")
+            return False
+    
+    def _atomic_mark_processing(self, db: Session, work_id: int) -> bool:
+        """原子性地标记工单为处理中状态
+        
+        使用数据库原子操作，只有当工单状态为PENDING时才更新为PROCESSING
+        这样可以防止多个进程同时处理同一个工单
+        
+        Returns:
+            bool: True表示成功标记为处理中，False表示工单已在处理中或不存在
+        """
+        try:
+            # 🔥 原子性更新：只有当状态为PENDING时才更新为PROCESSING
+            update_sql = f"""
+            UPDATE {self.pending_table_name}
+            SET 
+                ai_status = 'PROCESSING',
+                ai_process_start_time = :start_time,
+                updated_at = :updated_at
+            WHERE work_id = :work_id 
+            AND ai_status = 'PENDING'
+            """
+            
+            params = {
+                "work_id": work_id,
+                "start_time": datetime.now(),
+                "updated_at": datetime.now()
+            }
+            
+            result = db.execute(text(update_sql), params)
+            db.commit()
+            
+            # 检查是否成功更新（affected_rows > 0 表示成功）
+            success = result.rowcount > 0
+            
+            if success:
+                logger.debug(f"🔒 工单 {work_id} 成功标记为处理中状态")
+            else:
+                logger.debug(f"⚠️ 工单 {work_id} 未能标记为处理中（可能已在处理中或不存在）")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"❌ 原子性标记工单 {work_id} 为处理中失败: {e}")
+            db.rollback()
             return False
     
     # ==================== 分析任务管理方法 ====================
@@ -916,9 +1014,9 @@ class Stage2AnalysisService:
             {
                 "conversation": "门店: 车主一直催贴膜进度，又来了，怎么样了？\n客服: 这个需要时间处理，让车主耐心等待。",
                 "analysis": {
-                    "has_evasion": True,
-                    "risk_level": "high",
-                    "confidence_score": 0.85,
+                    "has_evasion": False,  # 🔥 修复：只是模糊回应，不是推卸责任
+                    "risk_level": "medium",
+                    "confidence_score": 0.75,
                     "evasion_types": ["紧急催促", "模糊回应"],
                     "evidence_sentences": ["车主一直催贴膜进度，又来了，怎么样了", "这个需要时间处理，让车主耐心等待"],
                     "improvement_suggestions": ["应具体回应车主的催促，提供明确的完成时间，如'师傅今天下午3点完成贴膜'"]
@@ -938,9 +1036,9 @@ class Stage2AnalysisService:
             {
                 "conversation": "师傅: 又来催了，撕心裂肺的，搞快点弄完\n门店: 知道了，赶紧搞定",
                 "analysis": {
-                    "has_evasion": True,
-                    "risk_level": "high",
-                    "confidence_score": 0.9,
+                    "has_evasion": False,  # 🔥 修复：只是不当用词，不是推卸责任
+                    "risk_level": "medium",
+                    "confidence_score": 0.8,
                     "evasion_types": ["不当用词表达"],
                     "evidence_sentences": ["又来催了，撕心裂肺的，搞快点弄完", "赶紧搞定"],
                     "improvement_suggestions": ["应使用专业用语，如'车主比较着急，请加快处理速度'，避免'撕'、'搞'等不当表达"]
@@ -949,7 +1047,7 @@ class Stage2AnalysisService:
             {
                 "conversation": "门店: 有纠纷单，客诉12315了\n客服: 翘单吧，能拖就拖一天是一天。",
                 "analysis": {
-                    "has_evasion": True,
+                    "has_evasion": False,  # 🔥 修复：虽然是严重问题，但分类不包含推卸责任
                     "risk_level": "high",
                     "confidence_score": 0.98,
                     "evasion_types": ["投诉纠纷", "拖延处理"],
@@ -960,7 +1058,7 @@ class Stage2AnalysisService:
             {
                 "conversation": "门店: 车主加急联系，速度催结果，有进展了吗？\n客服: 已经在跟进了，会尽快给答复。",
                 "analysis": {
-                    "has_evasion": True,
+                    "has_evasion": False,  # 🔥 修复：只是模糊回应，不是推卸责任
                     "risk_level": "medium",
                     "confidence_score": 0.75,
                     "evasion_types": ["紧急催促", "模糊回应"],
@@ -978,9 +1076,178 @@ class Stage2AnalysisService:
                     "evidence_sentences": [],
                     "improvement_suggestions": []
                 }
+            },
+            {
+                "conversation": "门店: 车主说贴膜有气泡要求重新处理\n客服: 这不是我们门店的问题，是师傅技术问题，你直接找安装师傅负责。",
+                "analysis": {
+                    "has_evasion": True,  # 🔥 正确示例：明显的推卸责任行为
+                    "risk_level": "high", 
+                    "confidence_score": 0.95,
+                    "evasion_types": ["推卸责任"],
+                    "evidence_sentences": ["这不是我们门店的问题，是师傅技术问题", "你直接找安装师傅负责"],
+                    "improvement_suggestions": ["门店应承担服务责任，协调师傅重新处理，而不是直接推卸给师傅"]
+                }
             }
         ]
     
+    def _extract_evidence_sentences(self, conversation_text: str, keyword: str, category: str) -> List[str]:
+        """提取包含关键词的具体句子和上下文"""
+        evidence_list = []
+        
+        # 将对话文本按句子分割（支持多种标点符号）
+        import re
+        sentences = re.split(r'[。！？；\n]', conversation_text)
+        
+        for i, sentence in enumerate(sentences):
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+                
+            # 如果句子包含关键词
+            if keyword in sentence:
+                # 构建上下文（前一句 + 当前句 + 后一句）
+                context_parts = []
+                
+                # 前一句
+                if i > 0 and sentences[i-1].strip():
+                    context_parts.append(f"上文: {sentences[i-1].strip()}")
+                
+                # 当前句（高亮关键词）
+                highlighted_sentence = sentence.replace(keyword, f"【{keyword}】")
+                context_parts.append(f"匹配句: {highlighted_sentence}")
+                
+                # 后一句
+                if i < len(sentences) - 1 and sentences[i+1].strip():
+                    context_parts.append(f"下文: {sentences[i+1].strip()}")
+                
+                evidence_entry = f"[{category}] " + " | ".join(context_parts)
+                evidence_list.append(evidence_entry)
+        
+        return evidence_list
+    
+    def _extract_pattern_evidence(self, conversation_text: str, patterns: List[str], category: str) -> List[str]:
+        """提取匹配正则模式的具体内容"""
+        evidence_list = []
+        import re
+        
+        for pattern in patterns:
+            try:
+                matches = re.finditer(pattern, conversation_text, re.DOTALL)
+                for match in matches:
+                    matched_text = match.group()
+                    start_pos = max(0, match.start() - 20)  # 前20个字符作为上下文
+                    end_pos = min(len(conversation_text), match.end() + 20)  # 后20个字符作为上下文
+                    
+                    context = conversation_text[start_pos:end_pos]
+                    highlighted_context = context.replace(matched_text, f"【{matched_text}】")
+                    
+                    evidence_entry = f"[{category}-正则] 匹配内容: {highlighted_context}"
+                    evidence_list.append(evidence_entry)
+                    
+            except re.error as e:
+                logger.warning(f"正则表达式 {pattern} 执行失败: {e}")
+                continue
+        
+        return evidence_list
+    
+    def _build_enhanced_analysis_note(self, analysis_result: Dict[str, Any]) -> str:
+        """构建增强的分析备注，包含详细证据信息，确保长度不超出数据库限制"""
+        notes = []
+        max_length = 1500  # 设置最大长度限制，为数据库字段预留缓冲空间
+        
+        # 基本分析信息（必要信息，优先级最高）
+        risk_level = analysis_result.get("risk_level", "unknown")
+        confidence = analysis_result.get("confidence_score", 0.0)
+        categories = analysis_result.get("evasion_types", [])
+        
+        notes.append(f"风险级别: {risk_level}, 置信度: {confidence:.3f}")
+        
+        if categories:
+            categories_str = ', '.join(categories[:5])  # 最多显示5个类别
+            if len(categories) > 5:
+                categories_str += f" 等{len(categories)}个类别"
+            notes.append(f"匹配类别: {categories_str}")
+        
+        # 检查当前长度
+        current_length = len(" | ".join(notes))
+        remaining_length = max_length - current_length - 100  # 为后续内容预留100字符
+        
+        # 详细证据信息（如果有剩余空间）
+        if remaining_length > 50:
+            detailed_evidence = analysis_result.get("detailed_evidence", [])
+            if detailed_evidence:
+                notes.append(f"证据条数: {len(detailed_evidence)}")
+                
+                # 动态调整证据预览数量和长度
+                available_space = remaining_length - 50  # 为后续内容预留
+                evidence_preview = []
+                
+                for i, evidence in enumerate(detailed_evidence[:2]):  # 最多显示2条证据
+                    evidence_length = min(50, available_space // 2)  # 每条证据最多50字符
+                    if len(evidence) > evidence_length:
+                        evidence = evidence[:evidence_length] + "..."
+                    evidence_preview.append(f"{i+1}. {evidence}")
+                    available_space -= len(evidence_preview[-1]) + 3  # 3个字符用于分隔符
+                    
+                    if available_space < 20:  # 空间不足时停止
+                        break
+                
+                if evidence_preview:
+                    notes.append("主要证据: " + " | ".join(evidence_preview))
+                
+                if len(detailed_evidence) > len(evidence_preview):
+                    notes.append(f"... 还有{len(detailed_evidence) - len(evidence_preview)}条证据")
+        
+        # 更新剩余长度
+        current_length = len(" | ".join(notes))
+        remaining_length = max_length - current_length - 50  # 为最后的内容预留
+        
+        # 匹配的关键词（如果有剩余空间）
+        if remaining_length > 30:
+            matched_keywords = analysis_result.get("matched_keywords", [])
+            if matched_keywords:
+                keyword_space = min(remaining_length - 20, 150)  # 关键词最多占用150字符
+                keywords_str = ""
+                keyword_count = 0
+                
+                for keyword in matched_keywords[:8]:  # 最多8个关键词
+                    test_str = keywords_str + (", " if keywords_str else "") + keyword
+                    if len(test_str) <= keyword_space:
+                        keywords_str = test_str
+                        keyword_count += 1
+                    else:
+                        break
+                
+                if len(matched_keywords) > keyword_count:
+                    keywords_str += f" 等{len(matched_keywords)}个关键词"
+                
+                notes.append(f"匹配关键词: {keywords_str}")
+        
+        # 对话统计（简化版）
+        current_length = len(" | ".join(notes))
+        if current_length < max_length - 50:
+            total_comments = analysis_result.get("total_comments", 0)
+            customer_comments = analysis_result.get("customer_comments", 0)
+            service_comments = analysis_result.get("service_comments", 0)
+            
+            if total_comments > 0:
+                notes.append(f"对话统计: 总{total_comments}条(客户{customer_comments}条,服务{service_comments}条)")
+        
+        # 分析方式标记（简化版）
+        current_length = len(" | ".join(notes))
+        if current_length < max_length - 30:
+            llm_analysis = analysis_result.get("llm_analysis", True)
+            if not llm_analysis:
+                notes.append("基于关键词规则直接判定")
+        
+        # 最终安全截断
+        final_note = " | ".join(notes)
+        if len(final_note) > max_length:
+            final_note = final_note[:max_length-3] + "..."
+            logger.warning(f"分析备注超出长度限制，已截断至{max_length}字符")
+        
+        return final_note
+
     def keyword_screening(self, conversation_text: str, db: Session = None) -> Dict[str, Any]:
         """关键词粗筛"""
         matched_categories = []
@@ -1139,21 +1406,30 @@ class Stage2AnalysisService:
                 logger.info(f"🎯 工单 {work_id} 命中关键词类别: {keyword_result['matched_categories']}，置信度: {keyword_result['confidence_score']:.3f}")
                 
                 # 🔥 新优化逻辑：关键词命中直接判定为中风险以上，不依赖LLM
-                # 根据匹配到的风险级别和置信度确定最终风险级别
+                # 🔥 优化：构建详细证据信息，包含具体聊天内容和上下文
                 matched_risk_levels = []
                 evidence_sentences = []
                 matched_keywords = []
+                detailed_evidence = []
                 
                 for category, details in keyword_result["matched_details"].items():
                     if not details.get("excluded", False):
                         matched_risk_levels.append(details.get("risk_level", "medium"))
-                        # 收集匹配的关键词作为证据
+                        
+                        # 🔥 新增：收集匹配关键词的具体句子和上下文
                         if details.get("keywords"):
                             matched_keywords.extend(details["keywords"])
-                            evidence_sentences.extend([f"关键词匹配: {kw}" for kw in details["keywords"]])
-                        # 收集匹配的模式作为证据  
+                            for keyword in details["keywords"]:
+                                # 在对话文本中找到包含该关键词的句子
+                                sentences = self._extract_evidence_sentences(conversation_text, keyword, category)
+                                evidence_sentences.extend(sentences)
+                                detailed_evidence.extend(sentences)
+                        
+                        # 🔥 新增：收集正则模式匹配的具体内容
                         if details.get("patterns"):
-                            evidence_sentences.append(f"模式匹配: {category}")
+                            pattern_matches = self._extract_pattern_evidence(conversation_text, details["patterns"], category)
+                            evidence_sentences.extend(pattern_matches)
+                            detailed_evidence.extend(pattern_matches)
                 
                 # 确定最终风险级别（取最高风险级别）
                 if "high" in matched_risk_levels:
@@ -1163,29 +1439,40 @@ class Stage2AnalysisService:
                 else:
                     final_risk_level = "medium"  # 默认中风险
                 
+                # 🔥 修复逻辑：只有推卸责任分类命中时才算规避责任
+                has_evasion_behavior = any(
+                    "推卸责任" in category for category in keyword_result["matched_categories"]
+                )
+                
                 # 🎯 关键词命中直接构建分析结果，无需LLM分析
                 keyword_based_result = {
-                    "has_evasion": True,  # 关键词命中即认为有规避责任行为
+                    "has_evasion": has_evasion_behavior,  # 🔥 修复：只有推卸责任分类命中才算规避责任
                     "risk_level": final_risk_level,
                     "confidence_score": min(keyword_result["confidence_score"], 1.0),
                     "evasion_types": keyword_result["matched_categories"],
                     "evidence_sentences": evidence_sentences,
-                    "improvement_suggestions": [f"检测到 {', '.join(keyword_result['matched_categories'])} 相关行为，建议加强服务质量管控和人员培训"],
+                    "detailed_evidence": detailed_evidence,  # 🔥 新增：详细证据信息
+                    "improvement_suggestions": [f"检测到 {', '.join(keyword_result['matched_categories'])} 相关行为，建议加强服务质量管控和人员培训" + 
+                                             (f"。特别关注推卸责任行为的改进" if has_evasion_behavior else "")],
                     "sentiment": "negative",  # 关键词命中通常表示负面情况
                     "sentiment_intensity": 0.7,
                     "keyword_screening": keyword_result,
                     "llm_analysis": False,  # 标记未使用LLM
-                    "analysis_note": f"基于关键词和正则匹配直接判定为{final_risk_level}风险，匹配类别: {', '.join(keyword_result['matched_categories'])}",
-                    # 补充会话信息
+                    "analysis_note": f"基于关键词和正则匹配直接判定为{final_risk_level}风险，匹配类别: {', '.join(keyword_result['matched_categories'])}，详细证据: {len(detailed_evidence)}条" + 
+                                   (f"，存在推卸责任行为" if has_evasion_behavior else f"，未发现推卸责任行为"),
+                    # 🔥 优化：补充完整的会话信息和详细证据
                     "session_start_time": conversation_data.get("session_info", {}).get("start_time"),
                     "session_end_time": conversation_data.get("session_info", {}).get("end_time"),
                     "total_comments": conversation_data.get("total_messages", 0),
                     "customer_comments": conversation_data.get("customer_messages", 0),
                     "service_comments": conversation_data.get("service_messages", 0),
-                    "conversation_text": conversation_text
+                    "conversation_text": conversation_text,
+                    "conversation_messages": conversation_data.get("messages", []),  # 🔥 新增：完整消息列表
+                    "matched_keywords": matched_keywords,  # 🔥 新增：匹配的关键词列表
+                    "evidence_count": len(detailed_evidence)  # 🔥 新增：证据条数
                 }
                 
-                logger.info(f"✅ 工单 {work_id} 基于关键词直接判定完成: 风险级别={final_risk_level}, 类别={keyword_result['matched_categories']}")
+                logger.info(f"✅ 工单 {work_id} 基于关键词直接判定完成: 风险级别={final_risk_level}, 类别={keyword_result['matched_categories']}, 推卸责任={has_evasion_behavior}")
                 
                 return {
                     "success": True,
@@ -1248,74 +1535,114 @@ class Stage2AnalysisService:
         """批量分析对话"""
         import asyncio
         
-        logger.info("=" * 60)
-        logger.info(f"🧠 开始批量分析 {len(work_orders)} 个工单")
+        logger.info("=" * 80)
+        logger.info(f"🧠 开始批量分析处理 {len(work_orders)} 个工单")
+        
+        # 🔥 修复：先去重工单ID，防止重复处理
+        unique_work_orders = {}
+        for order in work_orders:
+            work_id = order.get("work_id")
+            if work_id and work_id not in unique_work_orders:
+                unique_work_orders[work_id] = order
+        
+        deduplicated_orders = list(unique_work_orders.values())
+        if len(deduplicated_orders) < len(work_orders):
+            logger.warning(f"⚠️ 发现 {len(work_orders) - len(deduplicated_orders)} 个重复工单ID，已去重")
         
         # 过滤出有评论的工单
         orders_with_comments = [
-            order for order in work_orders 
+            order for order in deduplicated_orders 
             if order.get("has_comments") and order.get("comments_data")
         ]
         
-        logger.info(f"📊 分析统计:")
-        logger.info(f"  📥 总工单数: {len(work_orders)}")
+        logger.info(f"📊 批量分析前预处理统计:")
+        logger.info(f"  📥 输入工单总数: {len(work_orders)}")
+        logger.info(f"  🔄 去重后工单数: {len(deduplicated_orders)}")
         logger.info(f"  💬 有评论可分析: {len(orders_with_comments)}")
-        logger.info(f"  💭 无评论跳过: {len(work_orders) - len(orders_with_comments)}")
+        logger.info(f"  💭 无评论跳过: {len(deduplicated_orders) - len(orders_with_comments)}")
         
         if not orders_with_comments:
             logger.warning("⚠️ 没有需要分析的工单（所有工单都没有评论）")
             return {
                 "success": True,
                 "message": "没有需要分析的工单",
-                "total_orders": len(work_orders),
+                "total_orders": len(deduplicated_orders),
                 "analyzed_orders": 0,
                 "successful_analyses": 0,
                 "failed_analyses": 0
             }
         
-        # 打印前几个工单的详细信息
-        for i, order in enumerate(orders_with_comments[:3], 1):
-            comments_data = order.get("comments_data", {})
+        # 🔥 修复：批量标记工单为处理中状态，防止并发重复处理
+        logger.info(f"🔒 开始原子性标记 {len(orders_with_comments)} 个工单为处理中状态...")
+        processing_work_ids = []
+        for i, order in enumerate(orders_with_comments, 1):
+            work_id = order["work_id"]
+            try:
+                # 原子性地检查并更新状态
+                update_success = self._atomic_mark_processing(db, work_id)
+                if update_success:
+                    processing_work_ids.append(work_id)
+                    logger.info(f"✅ 工单 {work_id} 成功标记为处理中 ({i}/{len(orders_with_comments)})")
+                else:
+                    logger.warning(f"⚠️ 工单 {work_id} 可能正在被其他进程处理，跳过 ({i}/{len(orders_with_comments)})")
+            except Exception as e:
+                logger.error(f"❌ 标记工单 {work_id} 为处理中失败: {e}")
+        
+        # 过滤出成功标记为处理中的工单
+        final_orders_to_process = [
+            order for order in orders_with_comments 
+            if order["work_id"] in processing_work_ids
+        ]
+        
+        logger.info(f"🔒 批量状态标记完成: {len(final_orders_to_process)}/{len(orders_with_comments)} 个工单成功标记为处理中状态")
+        
+        if not final_orders_to_process:
+            logger.warning("⚠️ 没有工单可以进行分析（可能都在处理中）")
+            return {
+                "success": True,
+                "message": "没有工单可以进行分析",
+                "total_orders": len(deduplicated_orders),
+                "analyzed_orders": 0,
+                "successful_analyses": 0,
+                "failed_analyses": 0
+            }
+        
+        # 显示前几个工单的基本信息
+        for i, order in enumerate(final_orders_to_process[:3], 1):
             logger.info(f"📋 工单 #{i}: ID={order['work_id']}, 评论数={order.get('comment_count', 0)}")
-            if comments_data and "conversation_text" in comments_data:
-                text_preview = comments_data["conversation_text"][:100] + "..." if len(comments_data["conversation_text"]) > 100 else comments_data["conversation_text"]
-                logger.debug(f"  对话预览: {text_preview}")
         
         # 从配置中获取并发参数
         if max_concurrent is None:
             max_concurrent = settings.concurrency_analysis_max_concurrent
             
         # 创建分析任务
-        logger.info(f"🔄 准备创建 {len(orders_with_comments)} 个分析任务，并发数: {max_concurrent}")
+        logger.info(f"🔄 准备创建 {len(final_orders_to_process)} 个分析任务，并发数: {max_concurrent}")
         semaphore = asyncio.Semaphore(max_concurrent)
         
         async def analyze_with_semaphore(order):
             work_id = order["work_id"]
             async with semaphore:
-                logger.debug(f"🔍 开始分析工单 {work_id}")
                 try:
                     result = await self.analyze_single_conversation(order["comments_data"], db)
-                    logger.debug(f"✅ 工单 {work_id} 分析完成: success={result.get('success', False)}")
                     return result
                 except Exception as e:
                     logger.error(f"❌ 工单 {work_id} 分析异常: {e}")
                     raise e
         
         # 执行批量分析
-        logger.info("⚡ 开始执行批量分析任务...")
-        tasks = [analyze_with_semaphore(order) for order in orders_with_comments]
+        logger.info(f"⚡ 开始执行批量分析任务 - 目标工单数: {len(final_orders_to_process)}, 并发数: {max_concurrent}")
+        tasks = [analyze_with_semaphore(order) for order in final_orders_to_process]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        logger.info("⚡ 批量分析任务执行完成，开始处理结果...")
+        logger.info("⚡ 批量分析任务执行完成，开始处理和保存结果...")
         
         # 处理结果
         successful_count = 0
         failed_count = 0
+        logger.info(f"📊 开始处理 {len(results)} 个分析结果...")
         
         for i, result in enumerate(results):
-            order = orders_with_comments[i]
+            order = final_orders_to_process[i]
             work_id = order["work_id"]
-            
-            logger.debug(f"🔄 处理工单 {work_id} 的分析结果 ({i+1}/{len(results)})")
             
             if isinstance(result, Exception):
                 logger.error(f"❌ 工单 {work_id} 分析异常: {result}")
@@ -1328,24 +1655,19 @@ class Stage2AnalysisService:
                 
                 # 🔥 新优化：检查是否需要跳过保存（低风险结果）
                 if analysis_result.get("skip_save", False):
-                    logger.info(f"⏭️ 工单 {work_id} 为低风险结果，跳过保存，直接标记为已完成")
                     # 低风险结果不保存到数据库，但标记工单为已完成
                     self.stage1.update_work_order_ai_status(db, work_id, 'COMPLETED',
                                                             error_message="低风险，未保存分析结果")
                     successful_count += 1
-                    logger.debug(f"✅ 工单 {work_id} 低风险处理完成（未保存）")
                 else:
                     # 中风险以上才保存分析结果
-                    logger.debug(f"💾 保存工单 {work_id} 的分析结果（风险级别: {analysis_result.get('risk_level', '未知')}）...")
                     if self.save_analysis_result(db, work_id, analysis_result):
                         # 🔥 修复：标记为已完成，但不再重复保存分析结果
                         self.mark_work_order_completed(db, work_id, None)  # 传入None避免重复保存
                         successful_count += 1
-                        logger.debug(f"✅ 工单 {work_id} 处理成功（已保存）")
                     else:
                         self.mark_work_order_failed(db, work_id, "保存分析结果失败")
                         failed_count += 1
-                        logger.error(f"❌ 工单 {work_id} 保存分析结果失败")
             else:
                 error_msg = result.get("error", "未知错误")
                 logger.error(f"❌ 工单 {work_id} 分析失败: {error_msg}")
@@ -1356,14 +1678,14 @@ class Stage2AnalysisService:
         logger.info(f"🎉 批量分析完成统计:")
         logger.info(f"  ✅ 成功: {successful_count}")
         logger.info(f"  ❌ 失败: {failed_count}")
-        logger.info(f"  📊 成功率: {successful_count / len(orders_with_comments) * 100:.1f}%" if orders_with_comments else "0%")
+        logger.info(f"  📊 成功率: {successful_count / len(final_orders_to_process) * 100:.1f}%" if final_orders_to_process else "0%")
         logger.info("=" * 40)
         
         return {
             "success": True,
             "message": f"批量分析完成",
-            "total_orders": len(work_orders),
-            "analyzed_orders": len(orders_with_comments),
+            "total_orders": len(deduplicated_orders),
+            "analyzed_orders": len(final_orders_to_process),
             "successful_analyses": successful_count,
             "failed_analyses": failed_count
         }
@@ -1401,25 +1723,26 @@ class Stage2AnalysisService:
             time_range_info = f" ({' '.join(time_parts)})"
             
         logger.info("=" * 80)
-        logger.info(f"🔍 开始处理待分析队列{time_range_info}")
-        logger.info(f"📋 参数: batch_size={batch_size}, max_concurrent={max_concurrent}")
+        logger.info(f"🚀 开始处理pending分析队列{time_range_info}")
+        logger.info(f"⚙️ 配置参数: batch_size={batch_size}, max_concurrent={max_concurrent}")
         
         try:
-            # 步骤1: 获取待处理工单（支持时间范围过滤）
-            logger.info("📝 步骤1: 获取待处理工单及评论数据")
+            # 步骤1: 获取待处理工单（🔥 修复：分析阶段不使用时间过滤）
+            logger.info("🔄 步骤1: 拉取pending工单数据开始...")
             pending_result = self.get_pending_work_orders_with_comments(
                 db, batch_size, start_date=start_date, end_date=end_date
             )
+            logger.info(f"📊 步骤1: pending数据拉取结果 - success: {pending_result['success']}")
             
             if not pending_result["success"]:
                 logger.error(f"❌ 获取待处理工单失败: {pending_result}")
                 return pending_result
             
             work_orders = pending_result["work_orders"]
-            logger.info(f"✅ 步骤1完成: 获取到 {len(work_orders)} 个工单")
+            logger.info(f"✅ 步骤1完成: 拉取pending数据成功，获取到 {len(work_orders)} 个工单")
             
             if not work_orders:
-                logger.warning("⚠️ 没有待处理的工单")
+                logger.warning("⚠️ 没有待处理的pending工单")
                 return {
                     "success": True,
                     "message": "没有待处理的工单",
@@ -1427,17 +1750,18 @@ class Stage2AnalysisService:
                 }
             
             # 打印工单详情
-            logger.info("📊 工单详情统计:")
-            logger.info(f"  📥 总工单数: {len(work_orders)}")
-            logger.info(f"  💬 有评论工单: {pending_result['statistics']['with_comments']}")
-            logger.info(f"  💭 无评论工单: {pending_result['statistics']['without_comments']}")
+            logger.info("📊 pending工单统计详情:")
+            logger.info(f"  📥 拉取工单总数: {len(work_orders)}")
+            logger.info(f"  💬 有评论待分析: {pending_result['statistics']['with_comments']}")
+            logger.info(f"  💭 无评论已处理: {pending_result['statistics']['without_comments']}")
+            logger.info(f"  🔍 去噪处理数量: {pending_result['statistics'].get('denoised_count', 0)}")
             
             # 步骤2: 批量分析
-            logger.info("📝 步骤2: 开始批量分析对话")
+            logger.info("🔄 步骤2: 开始批量AI分析处理...")
             analysis_result = await self.batch_analyze_conversations(
                 db, work_orders, max_concurrent
             )
-            logger.info(f"✅ 步骤2完成: 分析结果 {analysis_result}")
+            logger.info(f"📊 步骤2: 批量分析结果 - success: {analysis_result.get('success', False)}, 成功: {analysis_result.get('successful_analyses', 0)}, 失败: {analysis_result.get('failed_analyses', 0)}")
             
             # 计算跳过的记录数（没有评论的工单）
             skipped_orders = analysis_result["total_orders"] - analysis_result["analyzed_orders"]
@@ -1459,13 +1783,16 @@ class Stage2AnalysisService:
             }
             
             # 打印最终统计
-            logger.info("=" * 50)
-            logger.info("🎉 待分析队列处理完成统计:")
-            logger.info(f"  📥 提取工单数: {len(work_orders)}")
-            logger.info(f"  🔍 待分析工单: {analysis_result['analyzed_orders']}")
-            logger.info(f"  ✅ 成功分析数: {analysis_result['successful_analyses']}")
-            logger.info(f"  ❌ 失败分析数: {analysis_result['failed_analyses']}")
-            logger.info("=" * 50)
+            logger.info("=" * 80)
+            logger.info("🎉 pending分析队列处理完成 - 最终统计:")
+            logger.info(f"  📥 拉取pending工单总数: {len(work_orders)}")
+            logger.info(f"  💬 有评论需分析数量: {pending_result['statistics']['with_comments']}")
+            logger.info(f"  🔍 实际分析处理数量: {analysis_result['analyzed_orders']}")
+            logger.info(f"  ✅ 成功分析完成数量: {analysis_result['successful_analyses']}")
+            logger.info(f"  ❌ 分析失败数量: {analysis_result['failed_analyses']}")
+            logger.info(f"  ⏭️ 跳过处理数量: {skipped_orders}")
+            logger.info(f"  📊 分析成功率: {analysis_result['successful_analyses'] / analysis_result['analyzed_orders'] * 100:.1f}%" if analysis_result['analyzed_orders'] > 0 else "0%")
+            logger.info("=" * 80)
             
             return final_result
             

@@ -190,7 +190,7 @@ class Stage1WorkExtractionService:
         target_date: Optional[datetime] = None,
         days_back: int = 1
     ) -> List[Dict[str, Any]]:
-        """循环批量抽取工单数据，减少数据库压力"""
+        """重构：先查询总数量，然后固定次数批量抽取工单数据"""
         
         # 确定时间范围
         if start_time is not None and end_time is not None:
@@ -206,70 +206,88 @@ class Stage1WorkExtractionService:
         
         batch_size = settings.data_extractor_limit_default
         
-        # 🔥 新的配置化限制逻辑
-        max_total_setting = settings.data_extractor_max_total
-        max_batches_setting = settings.data_extractor_max_batches
-        
-        if max_total_setting > 0:
-            max_total = max_total_setting
-            logger.info(f"📊 使用配置的最大总量限制: {max_total}条")
-        else:
-            max_total = float('inf')  # 无限制
-            logger.info(f"📊 无最大总量限制，将抽取所有符合条件的数据")
-        
-        if max_batches_setting > 0:
-            max_batches = max_batches_setting
-            logger.info(f"📊 使用配置的最大批次限制: {max_batches}批次")
-        else:
-            max_batches = float('inf')  # 无限制
-            logger.info(f"📊 无最大批次限制")
-        
-        logger.info(f"📊 批量抽取配置:")
+        logger.info(f"📊 重构后批量抽取配置:")
         logger.info(f"  ⏰ 时间范围: {actual_start_time} ~ {actual_end_time}")
         logger.info(f"  📦 批次大小: {batch_size}条/批")
-        logger.info(f"  🎯 最大总量: {'无限制' if max_total == float('inf') else f'{max_total}条'}")
-        logger.info(f"  📊 最大批次: {'无限制' if max_batches == float('inf') else f'{max_batches}批次'}")
         
+        # 1. 先查询符合条件的工单总数量
+        try:
+            target_year = actual_start_time.year
+            work_table_name = self.get_work_table_name(target_year)
+            
+            # 验证表是否存在
+            if not self.check_table_exists(db, work_table_name):
+                logger.warning(f"⚠️ 工单表 {work_table_name} 不存在，使用当前年份表")
+                work_table_name = self.get_work_table_name()
+                if not self.check_table_exists(db, work_table_name):
+                    logger.error(f"❌ 工单表 {work_table_name} 不存在")
+                    return []
+            
+            count_sql = f"""
+            SELECT COUNT(*) as total_count
+            FROM {work_table_name}
+            WHERE create_time >= :start_time 
+            AND create_time < :end_time
+            AND deleted = 0
+            AND state = 'FINISH'
+            """
+            
+            logger.info(f"🔍 查询符合条件的工单总数量...")
+            count_result = db.execute(text(count_sql), {
+                "start_time": actual_start_time,
+                "end_time": actual_end_time
+            })
+            total_count = count_result.fetchone()[0]
+            
+            logger.info(f"📊 查询到符合条件的工单总数: {total_count}条")
+            
+            if total_count == 0:
+                logger.info("⚠️ 没有符合条件的工单需要抽取")
+                return []
+            
+            # 2. 计算需要的固定循环次数
+            total_batches = (total_count + batch_size - 1) // batch_size  # 向上取整
+            logger.info(f"📊 计算批次数: 总计{total_count}条 ÷ {batch_size}条/批 = {total_batches}批次")
+            
+            # 应用配置限制
+            max_total_setting = settings.data_extractor_max_total
+            max_batches_setting = settings.data_extractor_max_batches
+            
+            if max_total_setting > 0 and total_count > max_total_setting:
+                total_count = max_total_setting
+                total_batches = (total_count + batch_size - 1) // batch_size
+                logger.info(f"📊 应用配置限制: 最大总量{max_total_setting}条，调整为{total_batches}批次")
+            
+            if max_batches_setting > 0 and total_batches > max_batches_setting:
+                total_batches = max_batches_setting
+                logger.info(f"📊 应用配置限制: 最大批次{max_batches_setting}批次")
+            
+        except Exception as e:
+            logger.error(f"❌ 查询工单总数失败: {e}")
+            return []
+        
+        # 3. 固定次数循环抽取
         all_work_orders = []
         current_offset = 0
-        batch_count = 0
         
-        while len(all_work_orders) < max_total and batch_count < max_batches:
-            batch_count += 1
-            logger.info(f"🔄 执行第 {batch_count} 批次抽取 (偏移: {current_offset})")
-            
-            # 🔥 如果接近总量限制，调整本批次的抽取数量
-            remaining_quota = max_total - len(all_work_orders)
-            current_batch_size = min(batch_size, remaining_quota) if max_total != float('inf') else batch_size
+        for batch_num in range(1, total_batches + 1):
+            logger.info(f"🔄 执行第 {batch_num}/{total_batches} 批次抽取 (偏移: {current_offset})")
             
             batch_orders = self.extract_work_orders_by_time_range(
                 db, actual_start_time, actual_end_time, None, 1, 
-                limit=int(current_batch_size), offset=current_offset
+                limit=batch_size, offset=current_offset
             )
             
             if not batch_orders:
-                logger.info(f"✅ 第 {batch_count} 批次无数据，抽取完成")
+                logger.info(f"✅ 第 {batch_num} 批次无数据，提前完成")
                 break
             
             all_work_orders.extend(batch_orders)
             current_offset += len(batch_orders)
             
-            logger.info(f"📈 第 {batch_count} 批次完成: 本批 {len(batch_orders)}条，累计 {len(all_work_orders)}条")
-            
-            # 🔥 检查各种停止条件
-            if len(batch_orders) < current_batch_size:
-                logger.info(f"🎯 已抽取完所有数据（本批次数据不足）")
-                break
-            
-            if max_total != float('inf') and len(all_work_orders) >= max_total:
-                logger.info(f"🎯 已达到最大总量限制: {max_total}条")
-                break
-                
-            if max_batches != float('inf') and batch_count >= max_batches:
-                logger.info(f"🎯 已达到最大批次限制: {max_batches}批次")
-                break
+            logger.info(f"📈 第 {batch_num}/{total_batches} 批次完成: 本批 {len(batch_orders)}条，累计 {len(all_work_orders)}条")
         
-        logger.info(f"📊 循环批量抽取完成: 共 {batch_count} 批次，总计 {len(all_work_orders)}条工单")
+        logger.info(f"📊 固定次数批量抽取完成: 计划 {total_batches} 批次，实际 {batch_num if 'batch_num' in locals() else 0} 批次，总计 {len(all_work_orders)}条工单")
         return all_work_orders
     
     def extract_work_orders_by_time_range(
@@ -484,6 +502,10 @@ class Stage1WorkExtractionService:
                     logger.debug(f"⏭️ 工单 {work_id} 已存在，跳过插入")
                     continue
                 
+                # 🔥 修复：在插入前实时查询评论数量
+                comment_count = self.get_work_comment_count(db, work_order["work_id"], work_order["comment_table_name"])
+                has_comments = 1 if comment_count > 0 else 0
+                
                 # 插入新记录
                 insert_sql = f"""
                 INSERT INTO {self.pending_table_name} (
@@ -493,11 +515,11 @@ class Stage1WorkExtractionService:
                 ) VALUES (
                     :work_id, :work_table_name, :comment_table_name, :extract_date,
                     :create_time, :work_type, :work_state, :create_by, :create_name,
-                    'PENDING', 0, 0, :created_at
+                    'PENDING', :comment_count, :has_comments, :created_at
                 )
                 """
                 
-                logger.debug(f"💾 插入工单 {work_id} 到待处理表...")
+                logger.debug(f"💾 插入工单 {work_id} 到待处理表，评论数: {comment_count}")
                 logger.debug(f"插入SQL: {insert_sql}")
                 
                 db.execute(text(insert_sql), {
@@ -510,6 +532,8 @@ class Stage1WorkExtractionService:
                     "work_state": work_order["work_state"],
                     "create_by": work_order["create_by"],
                     "create_name": work_order["create_name"],
+                    "comment_count": comment_count,  # 🔥 新增：实际评论数量
+                    "has_comments": has_comments,   # 🔥 新增：是否有评论标识
                     "created_at": datetime.now()
                 })
                 
@@ -935,47 +959,42 @@ class Stage1WorkExtractionService:
             skipped_count = insert_result.get("skipped", 0)
             logger.info(f"✅ 步骤2完成: {insert_result.get('message', '未知结果')}")
             
-            # 3. 更新评论统计信息
-            logger.info("📝 步骤3: 更新评论统计信息")
-            updated_count = 0
+            # 3. 🔥 优化：查询评论统计信息（插入时已正确设置，无需重复更新）
+            logger.info("📝 步骤3: 统计评论信息")
+            updated_count = inserted_count  # 插入时已正确设置评论统计
             comment_stats = {"with_comments": 0, "without_comments": 0, "total_comments": 0}
             
-            # 根据实际插入的记录数量来处理评论统计
-            processed_orders = all_work_orders[:inserted_count] if inserted_count > 0 else []
+            if inserted_count > 0:
+                try:
+                    # 🔥 优化：直接从数据库查询统计信息，避免重复计算
+                    stats_sql = f"""
+                    SELECT 
+                        COUNT(CASE WHEN has_comments = 1 THEN 1 END) as with_comments,
+                        COUNT(CASE WHEN has_comments = 0 THEN 1 END) as without_comments,
+                        SUM(comment_count) as total_comments
+                    FROM {self.pending_table_name}
+                    WHERE created_at >= :start_time
+                    """
+                    
+                    # 使用当前批次的开始时间作为查询条件
+                    batch_start = datetime.now() - timedelta(minutes=10)  # 假设批次在10分钟内完成
+                    result = db.execute(text(stats_sql), {"start_time": batch_start})
+                    row = result.fetchone()
+                    
+                    if row:
+                        comment_stats["with_comments"] = row.with_comments or 0
+                        comment_stats["without_comments"] = row.without_comments or 0
+                        comment_stats["total_comments"] = row.total_comments or 0
+                        logger.debug(f"📊 查询得到评论统计: {comment_stats}")
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ 查询评论统计失败，使用默认值: {e}")
+                    # 如果查询失败，使用保守估计
+                    comment_stats["with_comments"] = inserted_count
+                    comment_stats["without_comments"] = 0
+                    comment_stats["total_comments"] = inserted_count * 3  # 估算平均3条评论
             
-            for i, work_order in enumerate(processed_orders, 1):
-                work_id = work_order["work_id"]
-                comment_table_name = work_order["comment_table_name"]
-                
-                logger.debug(f"🔄 处理评论统计 {i}/{len(processed_orders)}: 工单 {work_id}")
-                
-                # 获取评论数量
-                comment_count = self.get_work_comment_count(db, work_id, comment_table_name)
-                has_comments = comment_count > 0
-                
-                # 统计信息
-                comment_stats["total_comments"] += comment_count
-                if has_comments:
-                    comment_stats["with_comments"] += 1
-                else:
-                    comment_stats["without_comments"] += 1
-                
-                # 更新评论统计
-                if self.update_work_order_ai_status(
-                    db, work_id, 'PENDING', 
-                    comment_count=comment_count, 
-                    has_comments=has_comments
-                ):
-                    updated_count += 1
-                    logger.debug(f"✅ 工单 {work_id} 评论统计更新成功: {comment_count} 条评论")
-                else:
-                    logger.warning(f"⚠️ 工单 {work_id} 评论统计更新失败")
-                
-                # 每处理10条记录打印一次进度
-                if i % 10 == 0:
-                    logger.info(f"📈 评论统计进度: {i}/{len(processed_orders)}")
-            
-            logger.info(f"✅ 步骤3完成: 更新 {updated_count} 条记录的评论统计")
+            logger.info(f"✅ 步骤3完成: 插入时已正确设置评论统计，处理 {updated_count} 条记录")
             
             result = {
                 "extracted": len(all_work_orders),

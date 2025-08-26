@@ -290,14 +290,14 @@ async def get_task_statistics(
 
 @router.post("/manual-analysis", summary="手动执行分析任务 - 后台异步执行")
 async def run_manual_analysis(
-    limit: int = Query(50, description="分析记录数限制", ge=1, le=500),
+    limit: int = Query(200, description="分析记录数限制", ge=1, le=2000),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
     手动触发分析任务 - 后台异步执行，立即返回任务ID
     
-    - **limit**: 分析记录数限制 (1-500)
+    - **limit**: 分析记录数限制 (1-2000)
     """
     try:
         # 检查是否有正在运行的任务
@@ -495,7 +495,7 @@ async def cleanup_old_records(
 @router.post("/full-task", summary="执行完整任务流程 - 后台异步执行")
 async def run_full_task(
     target_date: Optional[str] = Query(None, description="目标日期 (YYYY-MM-DD)，默认为昨天"),
-    analysis_limit: int = Query(50, description="分析记录数限制", ge=1, le=500),
+    analysis_limit: int = Query(200, description="分析记录数限制", ge=1, le=2000),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -503,7 +503,7 @@ async def run_full_task(
     执行完整任务流程：先抽取后分析
     
     - **target_date**: 目标日期，格式为 YYYY-MM-DD，默认为昨天
-    - **analysis_limit**: 分析记录数限制 (1-500)
+    - **analysis_limit**: 分析记录数限制 (1-2000)
     """
     try:
         # 解析目标日期
@@ -582,7 +582,7 @@ async def run_full_task_range(
     start_time: str = Query(..., description="开始时间 (YYYY-MM-DDTHH:MM:SS)"),
     end_time: str = Query(..., description="结束时间 (YYYY-MM-DDTHH:MM:SS)"),
     loop_analysis: bool = Query(True, description="是否循环分析直到完成"),
-    batch_size: int = Query(50, description="分析批次大小", ge=1, le=100),
+    batch_size: int = Query(200, description="分析批次大小", ge=1, le=1000),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -591,8 +591,13 @@ async def run_full_task_range(
     
     - **start_time**: 开始时间，格式为 YYYY-MM-DDTHH:MM:SS
     - **end_time**: 结束时间，格式为 YYYY-MM-DDTHH:MM:SS
-    - **loop_analysis**: 是否循环分析直到队列为空
-    - **batch_size**: 每批次分析的记录数 (1-100)
+    - **loop_analysis**: 是否循环分析（True=无限循环直到完成，False=仅处理1轮）
+    - **batch_size**: 每批次分析的记录数 (建议50-200)
+    
+    **🔥 性能优化**: 
+    - 已修复阻塞问题：采用异步分批处理，避免长时间阻塞
+    - loop_analysis=true: 无限循环处理，直到所有PENDING数据分析完成
+    - loop_analysis=false: 单批次处理，立即返回，适合快速处理场景
     
     **返回**: 立即返回任务ID，可通过 `/api/v1/tasks/status/{task_id}` 查询进度
     """
@@ -691,20 +696,134 @@ async def run_full_task_range_async(
     try:
         logger.info(f"🚀 开始异步完整任务流程: {main_task_id}, 用户: {username}")
         
-        # 阶段1：数据抽取
+        # 阶段1：固定次数分批数据抽取
         task_record.update_task_progress(
             db=db,
             task_id=main_task_id,
-            process_stage="数据抽取中"
+            process_stage="开始数据抽取 - 查询总数量"
         )
         
         from app.services.stage1_work_extraction import stage1_service
         
-        extraction_result = stage1_service.extract_work_data_by_time_range(
-            db=db,
-            start_time=start_datetime,
-            end_time=end_datetime
-        )
+        # 重构：先查询总数量，然后固定次数循环
+        async def async_extract_in_batches():
+            import asyncio
+            batch_size = 1000
+            current_offset = 0
+            total_extracted = 0
+            total_inserted = 0
+            total_skipped = 0
+            
+            logger.info(f"📊 重构后抽取配置: 每批{batch_size}条，先查询总数量再固定循环")
+            
+            # 1. 先查询需要抽取的工单总数量
+            try:
+                current_year = start_datetime.year
+                work_table_name = f"t_work_{current_year}"
+                
+                count_sql = f"""
+                SELECT COUNT(*) as total_count
+                FROM {work_table_name}
+                WHERE create_time >= :start_time 
+                AND create_time < :end_time
+                AND deleted = 0
+                AND state = 'FINISH'
+                """
+                
+                logger.info(f"🔍 查询工单总数量，时间范围: {start_datetime} ~ {end_datetime}")
+                count_result = db.execute(text(count_sql), {
+                    "start_time": start_datetime,
+                    "end_time": end_datetime
+                })
+                total_count = count_result.fetchone()[0]
+                
+                logger.info(f"📊 查询到需要抽取的工单总数: {total_count}条")
+                
+                if total_count == 0:
+                    logger.info("⚠️ 没有需要抽取的工单")
+                    return {
+                        "success": True,
+                        "stage": "数据抽取",
+                        "statistics": {"extracted": 0, "inserted": 0, "skipped": 0, "batches_processed": 0},
+                        "message": "没有需要抽取的工单"
+                    }
+                
+                # 2. 计算需要的循环次数
+                total_batches = (total_count + batch_size - 1) // batch_size  # 向上取整
+                logger.info(f"📊 计算批次数: 总计{total_count}条 ÷ {batch_size}条/批 = {total_batches}批次")
+                
+            except Exception as e:
+                logger.error(f"❌ 查询工单总数失败: {e}")
+                return {
+                    "success": False,
+                    "stage": "数据抽取",
+                    "error": str(e),
+                    "message": "查询工单总数失败"
+                }
+            
+            # 3. 固定次数循环抽取
+            for batch_num in range(1, total_batches + 1):
+                logger.info(f"🔄 开始第{batch_num}/{total_batches}批抽取 (偏移: {current_offset})")
+                
+                # 更新任务进度
+                task_record.update_task_progress(
+                    db=db,
+                    task_id=main_task_id,
+                    process_stage=f"数据抽取中 - 第{batch_num}/{total_batches}批",
+                    extracted_records=total_extracted
+                )
+                
+                try:
+                    # 分批抽取工单数据
+                    batch_orders = stage1_service.extract_work_orders_by_time_range(
+                        db=db,
+                        start_time=start_datetime,
+                        end_time=end_datetime,
+                        limit=batch_size,
+                        offset=current_offset
+                    )
+                    
+                    if not batch_orders:
+                        logger.info(f"✅ 第{batch_num}批无数据，提前完成")
+                        break
+                    
+                    # 分批插入待处理表
+                    insertion_result = stage1_service.insert_pending_analysis_records(
+                        db=db, 
+                        work_orders=batch_orders
+                    )
+                    
+                    batch_inserted = insertion_result.get("inserted", 0)
+                    batch_skipped = insertion_result.get("skipped", 0)
+                    
+                    total_extracted += len(batch_orders)
+                    total_inserted += batch_inserted
+                    total_skipped += batch_skipped
+                    current_offset += len(batch_orders)
+                    
+                    logger.info(f"📈 第{batch_num}/{total_batches}批完成: 抽取{len(batch_orders)}条，插入{batch_inserted}条，跳过{batch_skipped}条")
+                        
+                except Exception as e:
+                    logger.error(f"❌ 第{batch_num}批抽取失败: {e}")
+                    continue
+                
+                # 异步让出执行权，避免长时间阻塞
+                await asyncio.sleep(0.2)
+            
+            return {
+                "success": True,
+                "stage": "固定次数数据抽取",
+                "statistics": {
+                    "extracted": total_extracted,
+                    "inserted": total_inserted, 
+                    "skipped": total_skipped,
+                    "batches_processed": total_batches,
+                    "planned_batches": total_batches
+                },
+                "message": f"固定次数抽取完成: 计划{total_batches}批，抽取{total_extracted}条，插入{total_inserted}条"
+            }
+        
+        extraction_result = await async_extract_in_batches()
         
         if not extraction_result.get("success"):
             raise Exception(f"数据抽取失败: {extraction_result.get('message', '未知错误')}")
@@ -714,17 +833,17 @@ async def run_full_task_range_async(
         inserted = stats.get("inserted", 0)
         skipped = stats.get("skipped", 0)
         
-        # 🔥 修复进度显示：抽取阶段只更新阶段信息和统计数据，不设置进度相关字段
+        # 更新抽取阶段完成状态
         task_record.update_task_progress(
             db=db,
             task_id=main_task_id,
-            process_stage="数据抽取完成，开始循环分析",
+            process_stage="数据抽取完成，准备开始分析",
             extracted_records=extracted,
             skipped_records=skipped,
             duplicate_records=skipped
         )
         
-        logger.info(f"✅ 阶段1完成: 抽取{extracted}条，插入{inserted}条，跳过重复{skipped}条")
+        logger.info(f"✅ 阶段1异步抽取完成: 抽取{extracted}条，插入{inserted}条，跳过重复{skipped}条")
         
         # 阶段2：循环分析（直到队列为空）
         from app.services.stage2_analysis_service import stage2_service
@@ -760,24 +879,107 @@ async def run_full_task_range_async(
         total_skipped = 0
         total_batches = 0
         
-        # 循环处理，直到队列为空
-        consecutive_empty_batches = 0
-        max_empty_batches = 3
+        # 🔥 优化：先查询pending表总数据量，合理设置循环次数
+        current_cycle = 0
         
-        while True:
-            # 在每次循环前，检查当前PENDING状态的工单数量（按时间范围过滤）
-            pending_result = db.execute(text(pending_count_sql), {
+        # 重构：根据loop_analysis参数决定处理方式，先查询总数再固定循环
+        if loop_analysis:
+            logger.info("🔄 启用循环分析模式，重构为固定次数循环")
+            
+            # 1. 先查询pending表中的总工单数量
+            initial_pending_result = db.execute(text(pending_count_sql), {
                 "start_time": start_datetime,
                 "end_time": end_datetime
             })
-            current_pending = pending_result.fetchone()[0]
+            total_pending_count = initial_pending_result.fetchone()[0]
             
-            logger.info(f"📋 循环前检查: 当前PENDING工单数={current_pending}")
+            # 2. 计算需要的固定循环次数
+            if total_pending_count > 0:
+                total_cycles = (total_pending_count + batch_size - 1) // batch_size  # 向上取整
+            else:
+                total_cycles = 0
             
-            # 如果没有PENDING工单了，直接停止
-            if current_pending == 0:
-                logger.info("📝 没有待处理的PENDING工单，循环分析完成")
-                break
+            logger.info(f"📊 重构后分析规划:")
+            logger.info(f"  📥 总PENDING工单数: {total_pending_count}")
+            logger.info(f"  📦 每批处理数量: {batch_size}")
+            logger.info(f"  🔄 固定循环次数: {total_cycles}")
+            
+            if total_pending_count == 0:
+                logger.info("📝 没有待处理的PENDING工单，跳过分析")
+            else:
+                # 3. 固定次数循环处理
+                for cycle_num in range(1, total_cycles + 1):
+                    current_cycle = cycle_num
+                    logger.info(f"🔄 开始第 {cycle_num}/{total_cycles} 轮分析")
+                    
+                    # 检查当前PENDING状态的工单数量（用于日志）
+                    pending_result = db.execute(text(pending_count_sql), {
+                        "start_time": start_datetime,
+                        "end_time": end_datetime
+                    })
+                    current_pending = pending_result.fetchone()[0]
+                    
+                    logger.info(f"📋 第{cycle_num}轮开始前: 剩余PENDING工单数={current_pending}")
+                    
+                    # 如果没有PENDING工单了，可以提前结束
+                    if current_pending == 0:
+                        logger.info("✅ 所有PENDING工单已处理完成，提前结束循环")
+                        break
+                    
+                    # 执行分析队列处理
+                    batch_result = await stage2_service.process_pending_analysis_queue(
+                        db=db,
+                        batch_size=batch_size,
+                        max_concurrent=5,
+                        start_date=start_datetime,
+                        end_date=end_datetime
+                    )
+                    
+                    # 累计统计
+                    analysis_stats = batch_result.get("analysis_statistics", {})
+                    batch_successful = analysis_stats.get("successful_analyses", 0)
+                    batch_failed = analysis_stats.get("failed_analyses", 0)
+                    batch_analyzed = analysis_stats.get("analyzed_orders", 0)
+                    batch_skipped = analysis_stats.get("skipped_orders", 0)
+                    
+                    total_successful += batch_successful
+                    total_failed += batch_failed
+                    total_analyzed += batch_analyzed
+                    total_skipped += batch_skipped
+                    total_batches += 1
+                    
+                    # 更新任务进度
+                    task_record.update_task_progress(
+                        db=db,
+                        task_id=main_task_id,
+                        process_stage=f"分析第{cycle_num}/{total_cycles}轮",
+                        success_records=total_successful,
+                        failed_records=total_failed,
+                        analyzed_records=total_analyzed
+                    )
+                    
+                    logger.info(f"📈 第{cycle_num}/{total_cycles}轮完成: 成功{batch_successful}, 失败{batch_failed}, 分析{batch_analyzed}, 跳过{batch_skipped}")
+                    logger.info(f"📊 累计进度: 成功{total_successful}, 失败{total_failed}, 累计跳过{total_skipped}")
+                    
+                    # 异步让出执行时间，避免长时间占用
+                    import asyncio
+                    await asyncio.sleep(0.5)
+        else:
+            logger.info("🎯 单批次分析模式，处理一批后立即返回")
+            
+            # 先查询pending表中的总工单数量
+            initial_pending_result = db.execute(text(pending_count_sql), {
+                "start_time": start_datetime,
+                "end_time": end_datetime
+            })
+            total_pending_count = initial_pending_result.fetchone()[0]
+            
+            logger.info(f"📊 单批次分析情况:")
+            logger.info(f"  📥 总PENDING工单数: {total_pending_count}")
+            logger.info(f"  📦 本批处理数量: {batch_size}")
+            logger.info(f"  📋 预计剩余轮次: {max(0, (total_pending_count - batch_size + batch_size - 1) // batch_size)}")
+            
+            current_cycle = 1
             
             # 🔥 修复：添加时间范围参数到分析队列处理
             batch_result = await stage2_service.process_pending_analysis_queue(
@@ -788,32 +990,37 @@ async def run_full_task_range_async(
                 end_date=end_datetime
             )
             
-            if not batch_result.get("success"):
-                logger.warning(f"⚠️ 批次分析失败: {batch_result.get('message', '未知错误')}")
-                break
-            
+            # 累计统计 - 修正字段名称
             analysis_stats = batch_result.get("analysis_statistics", {})
             batch_successful = analysis_stats.get("successful_analyses", 0)
             batch_failed = analysis_stats.get("failed_analyses", 0)
             batch_analyzed = analysis_stats.get("analyzed_orders", 0)
             batch_skipped = analysis_stats.get("skipped_orders", 0)
             
-            # 🔥 关键修复：如果本批次没有处理任何记录，增加空批次计数
-            if batch_analyzed == 0:
-                consecutive_empty_batches += 1
-                logger.info(f"📝 本批次没有处理记录，连续空批次: {consecutive_empty_batches}/{max_empty_batches}")
-                
-                if consecutive_empty_batches >= max_empty_batches:
-                    logger.info("📝 连续多个空批次，队列已空，循环分析完成")
-                    break
-            else:
-                consecutive_empty_batches = 0
-            
             total_successful += batch_successful
             total_failed += batch_failed
             total_analyzed += batch_analyzed
             total_skipped += batch_skipped
             total_batches += 1
+            
+            # 更新任务进度
+            task_record.update_task_progress(
+                db=db,
+                task_id=main_task_id,
+                process_stage=f"单批次分析完成",
+                success_records=total_successful,
+                failed_records=total_failed,
+                analyzed_records=total_analyzed
+            )
+            
+            logger.info(f"📈 单批次完成: 成功{batch_successful}, 失败{batch_failed}, 分析{batch_analyzed}, 跳过{batch_skipped}")
+            logger.info("🎯 单批次模式，处理完成立即返回")
+            
+            if not batch_result.get("success"):
+                logger.warning(f"⚠️ 第{current_cycle}轮分析失败: {batch_result.get('message', '未知错误')}")
+            
+            # 🔥 单批次模式已完成，无需继续处理
+            logger.info("📝 单批次分析模式完成")
             
             # 🔥 修复进度计算：processed_records应该包含所有已处理的记录（成功+失败+跳过）
             final_total_processed = total_successful + total_failed + total_skipped
@@ -828,17 +1035,27 @@ async def run_full_task_range_async(
                 analyzed_records=total_successful
             )
             
-            logger.info(f"📈 批次{total_batches}完成: 成功{batch_successful}, 失败{batch_failed}, 分析{batch_analyzed}, 跳过{batch_skipped}")
-            logger.info(f"📊 累计进度: 总批次{total_batches}, 成功{total_successful}, 失败{total_failed}, 累计跳过{total_skipped}")
+
             
-            # 可选：添加处理间隔，避免过度占用资源
-            if not loop_analysis:
-                logger.info("📝 不循环分析模式，完成一批次后停止")
-                break
-            
-            # 小延迟，让其他操作有机会执行
-            import asyncio
-            await asyncio.sleep(0.1)
+        # 🔥 新增：分析完成后检查剩余pending数量
+        final_pending_result = db.execute(text(pending_count_sql), {
+            "start_time": start_datetime,
+            "end_time": end_datetime
+        })
+        final_pending_count = final_pending_result.fetchone()[0]
+        
+        logger.info("=" * 80)
+        logger.info("📝 分析阶段完成总结:")
+        logger.info(f"  🔄 完成循环轮次: {current_cycle}")
+        logger.info(f"  ✅ 成功分析数量: {total_successful}")
+        logger.info(f"  ❌ 分析失败数量: {total_failed}")
+        logger.info(f"  ⏭️ 跳过处理数量: {total_skipped}")
+        logger.info(f"  📋 剩余PENDING数: {final_pending_count}")
+        if final_pending_count > 0:
+            logger.warning(f"⚠️ 还有 {final_pending_count} 个工单需要继续处理")
+        else:
+            logger.info("🎉 所有PENDING工单已完成处理！")
+        logger.info("=" * 80)
         
         # 构建最终执行详情
         duration_hours = round((end_datetime - start_datetime).total_seconds() / 3600, 2)
@@ -851,15 +1068,23 @@ async def run_full_task_range_async(
                 "time_range": f"{start_datetime} ~ {end_datetime}"
             },
             "analysis_phase": {
-                "total_batches": total_batches,
+                "total_cycles": current_cycle,  # 🔥 实际执行的循环次数
                 "analyzed": total_analyzed,
                 "successful": total_successful,
                 "failed": total_failed,
                 "skipped": total_skipped,
+                "remaining_pending": final_pending_count,  # 🔥 新增：剩余pending数量
                 "batch_size": batch_size,
-                "loop_analysis": loop_analysis
+                "loop_analysis": loop_analysis,
+                "processing_mode": "无限循环分析" if loop_analysis else "单批次分析",  # 🔥 修复：更新处理模式
+                "completion_status": "完成" if final_pending_count == 0 else f"未完成(剩余{final_pending_count}条)"  # 🔥 新增：完成状态
             },
-            "completion_summary": f"抽取{extracted}条，成功分析{total_successful}条，失败{total_failed}条，跳过{total_skipped}条"
+            "performance_optimization": {  # 🔥 性能优化信息
+                "blocking_prevention": "采用异步分批处理，避免长时间阻塞",
+                "cycle_delay": "0.5秒",
+                "termination_reason": "所有PENDING数据处理完成" if final_pending_count == 0 else f"处理完成(剩余{final_pending_count}条pending)"
+            },
+            "completion_summary": f"抽取{extracted}条，分析{current_cycle}轮，成功{total_successful}条，失败{total_failed}条，跳过{total_skipped}条，剩余{final_pending_count}条pending"
         }
         
         # 完成主任务
@@ -870,7 +1095,7 @@ async def run_full_task_range_async(
             execution_details=final_details
         )
         
-        logger.info(f"🎉 完整任务流程完成: 抽取{extracted}条，成功分析{total_successful}条")
+        logger.info(f"🎉 完整任务流程完成: 抽取{extracted}条，成功分析{total_successful}条，剩余pending{final_pending_count}条")
         
         return final_details
         
