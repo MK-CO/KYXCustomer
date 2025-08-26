@@ -57,6 +57,17 @@ async def lifespan(app: FastAPI):
     print_item("应用版本", settings.app_version)
     print_item("API端口", str(settings.api_port))
     
+    # 安全配置信息
+    print_section("安全配置", "🔒")
+    try:
+        print_item("每分钟限制", f"{settings.security_rate_limit_requests_per_minute} 次", "✅")
+        print_item("每小时限制", f"{settings.security_rate_limit_requests_per_hour} 次", "✅")
+        print_item("每日限制", f"{settings.security_rate_limit_requests_per_day} 次", "✅")
+        print_item("JWT过期时间", f"{settings.security_jwt_expire_hours} 小时", "✅")
+        print_item("密钥状态", f"长度 {len(settings.security_jwt_secret_key)} 字符", "✅")
+    except Exception as e:
+        print_item("安全配置", f"加载失败: {str(e)[:30]}...", "❌")
+    
     # LLM配置信息
     print_section("LLM配置", "🤖")
     print_item("服务提供商", settings.llm_provider)

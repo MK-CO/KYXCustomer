@@ -39,6 +39,17 @@ class MemoryRateLimiter:
         # 清理间隔（秒）
         self._last_cleanup = time.time()
         self._cleanup_interval = 300  # 5分钟清理一次
+        
+        # 启动时记录配置信息
+        logger.info("🔒 安全模块初始化完成")
+        logger.info(f"  📊 速率限制配置:")
+        logger.info(f"    - 每分钟限制: {settings.security_rate_limit_requests_per_minute} 次")
+        logger.info(f"    - 每小时限制: {settings.security_rate_limit_requests_per_hour} 次") 
+        logger.info(f"    - 每日限制: {settings.security_rate_limit_requests_per_day} 次")
+        logger.info(f"  🛡️ 登录保护配置:")
+        logger.info(f"    - 最大失败次数: {settings.security_login_max_attempts} 次")
+        logger.info(f"    - 锁定时间: {settings.security_login_lockout_duration_minutes} 分钟")
+        logger.info(f"    - IP白名单: {len(self._ip_whitelist)} 个")
     
     def _cleanup_old_records(self) -> None:
         """清理过期记录"""

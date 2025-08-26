@@ -116,6 +116,25 @@ def check_database_connection():
         return False
 
 
+def show_security_config():
+    """显示安全配置信息"""
+    print("🔒 检查安全配置...")
+    try:
+        from config.settings import settings
+        print("   🛡️ 速率限制配置:")
+        print(f"      - 每分钟限制: {settings.security_rate_limit_requests_per_minute} 次")
+        print(f"      - 每小时限制: {settings.security_rate_limit_requests_per_hour} 次")
+        print(f"      - 每日限制: {settings.security_rate_limit_requests_per_day} 次")
+        print(f"   🔐 认证配置:")
+        print(f"      - JWT密钥长度: {len(settings.secret_key)} 字符")
+        print(f"      - Token过期时间: {settings.access_token_expire_minutes} 分钟")
+        print("✅ 安全配置加载成功")
+        return True
+    except Exception as e:
+        print(f"⚠️ 安全配置警告: {e}")
+        return False
+
+
 def start_service(env, mode, host, port, install_deps=True, skip_deps=False):
     """启动服务"""
     print(f"\n🚀 启动AI平台智能分析系统...")
@@ -134,6 +153,9 @@ def start_service(env, mode, host, port, install_deps=True, skip_deps=False):
     
     # 检查数据库
     check_database_connection()
+    
+    # 显示安全配置
+    show_security_config()
     
     print("\n" + "="*50)
     print("🎯 服务启动中...")
