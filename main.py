@@ -26,6 +26,7 @@ from app.api.system import router as system_router
 from app.api.tasks import router as tasks_router
 from app.api.auth import router as auth_router
 from app.api.security import router as security_router
+from app.api.keyword_config import router as keyword_config_router
 from app.services.apscheduler_service import apscheduler_service
 from app.core.security import security_middleware
 from app.core.concurrency import concurrency_manager
@@ -34,41 +35,144 @@ from app.core.concurrency import concurrency_manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    # 启动时执行
-    print(f"🚀 AI平台智能分析系统启动中...")
-    print(f"🌍 运行环境: {settings.environment}")
-    print(f"🤖 LLM提供商: {settings.llm_provider}")
     
-    # 创建数据库表
+    def print_section(title: str, icon: str = ""):
+        """打印格式化的区块标题"""
+        print(f"\n{icon} {title}")
+        print("─" * (len(title) + 3))
+    
+    def print_item(key: str, value: str, status: str = ""):
+        """打印格式化的配置项"""
+        status_icon = {"✅": "✅", "❌": "❌", "⚠️": "⚠️", "🔄": "🔄"}.get(status, "  ")
+        print(f"  {status_icon} {key:<20} : {value}")
+    
+    # 启动标题
+    print("\n" + "═" * 80)
+    print("🚀 AI平台智能分析系统")
+    print("═" * 80)
+    
+    # 系统信息
+    print_section("系统配置", "⚙️")
+    print_item("运行环境", settings.environment)
+    print_item("应用版本", settings.app_version)
+    print_item("API端口", str(settings.api_port))
+    
+    # LLM配置信息
+    print_section("LLM配置", "🤖")
+    print_item("服务提供商", settings.llm_provider)
+    if settings.llm_provider == "volcengine":
+        print_item("模型名称", settings.volcengine_model)
+        print_item("备用模型", settings.volcengine_model_alternate)
+        print_item("服务区域", settings.volcengine_region)
+        print_item("API状态", "已配置" if settings.volcengine_api_key else "未配置", "✅" if settings.volcengine_api_key else "❌")
+    elif settings.llm_provider == "siliconflow":
+        print_item("模型名称", settings.siliconflow_model)
+        print_item("API地址", settings.siliconflow_base_url)
+        print_item("API状态", "已配置" if settings.siliconflow_api_key else "未配置", "✅" if settings.siliconflow_api_key else "❌")
+    
+    # 数据库初始化
+    print_section("数据库连接", "🗄️")
     try:
+        print_item("数据库地址", f"{settings.db_host}:{settings.db_port}")
+        print_item("数据库名称", settings.db_name)
+        print_item("数据库用户", settings.db_user)
+        
         create_tables()
-        print("✅ 数据库表检查完成")
+        print_item("连接状态", "正常，表结构检查完成", "✅")
     except Exception as e:
-        print(f"❌ 数据库表创建失败: {e}")
+        print_item("连接状态", f"失败: {str(e)[:50]}...", "❌")
     
-    # 初始化并发管理器
+    # 规则引擎加载
+    print_section("规则引擎配置", "🔧")
+    try:
+        from app.db.database import get_db
+        from app.services.keyword_config_manager import keyword_config_manager
+        
+        # 获取数据库会话来加载配置
+        db_gen = get_db()
+        db = next(db_gen)
+        
+        try:
+            # 获取详细的配置统计信息
+            stats_result = keyword_config_manager.get_config_statistics(db)
+            
+            if stats_result["success"]:
+                stats = stats_result["data"]
+                
+                # 显示分析关键词配置统计
+                categories_stats = stats.get("analysis_categories", {})
+                keywords_stats = stats.get("analysis_keywords", {})
+                
+                print_item("配置来源", "数据库配置", "✅")
+                print_item("分析分类", f"启用 {categories_stats.get('enabled', 0)} 个, 禁用 {categories_stats.get('disabled', 0)} 个", "✅")
+                print_item("分析关键词", f"启用 {keywords_stats.get('enabled', 0)} 个, 禁用 {keywords_stats.get('disabled', 0)} 个", "✅")
+                
+                # 显示各分类的详细配置
+                analysis_config = keyword_config_manager.get_analysis_keywords_config(db, use_cache=False)
+                if analysis_config:
+                    for category, config in analysis_config.items():
+                        keyword_count = len(config.get("keywords", []))
+                        pattern_count = len(config.get("patterns", []))
+                        exclusion_count = len(config.get("exclusions", []))
+                        extra_info = ""
+                        if exclusion_count > 0:
+                            extra_info = f", {exclusion_count} 排除"
+                        print_item(f"  └─ {category}", f"{keyword_count} 关键词, {pattern_count} 正则{extra_info}")
+                
+                # 显示去噪配置统计
+                denoise_stats = stats.get("denoise_patterns", {})
+                total_enabled = sum(pattern.get("enabled", 0) for pattern in denoise_stats.values())
+                total_disabled = sum(pattern.get("disabled", 0) for pattern in denoise_stats.values())
+                
+                print_item("去噪规则", f"启用 {total_enabled} 个, 禁用 {total_disabled} 个", "✅")
+                
+                for pattern_type, pattern_stats in denoise_stats.items():
+                    type_name_map = {
+                        "normal_operation": "正常操作",
+                        "invalid_data": "无效数据", 
+                        "system_keyword": "系统关键词"
+                    }
+                    type_name = type_name_map.get(pattern_type, pattern_type)
+                    enabled = pattern_stats.get("enabled", 0)
+                    disabled = pattern_stats.get("disabled", 0)
+                    if disabled > 0:
+                        print_item(f"  └─ {type_name}", f"启用 {enabled} 个, 禁用 {disabled} 个")
+                    else:
+                        print_item(f"  └─ {type_name}", f"启用 {enabled} 个")
+                
+            else:
+                print_item("配置来源", "数据库连接失败，使用默认配置", "⚠️")
+                print_item("备用方案", "硬编码配置已激活", "⚠️")
+                
+        finally:
+            db.close()
+            
+    except Exception as e:
+        print_item("规则引擎", f"加载失败: {str(e)[:50]}...", "❌")
+        print_item("备用方案", "将使用硬编码默认配置", "⚠️")
+    
+    # 并发管理器
+    print_section("并发控制", "⚡")
     concurrency_manager.initialize()
-    print("⚡ 并发管理器已初始化")
+    print_item("并发管理器", "已初始化", "✅")
+    print_item("最大并发数", str(getattr(settings, 'concurrency_analysis_max_concurrent', 3)))
+    print_item("批次大小", str(getattr(settings, 'concurrency_analysis_batch_size', 50)))
     
-    # 🚀 自动启动APScheduler调度器
+    # 调度器启动
+    print_section("任务调度器", "🔄")
     try:
         await apscheduler_service.start()
-        print("✅ APScheduler调度器已自动启动")
-        print("📋 自动加载任务配置并开始执行")
-        print("🔄 使用APScheduler替代传统调度器，更稳定更强大")
+        print_item("APScheduler", "启动成功", "✅")
+        print_item("调度状态", "自动任务调度已启用", "✅")
     except Exception as e:
-        print(f"❌ APScheduler调度器启动失败: {e}")
-        print("💡 系统将继续运行，但任务调度不可用")
+        print_item("APScheduler", f"启动失败: {str(e)[:50]}...", "❌")
+        print_item("影响范围", "手动任务仍可正常执行", "⚠️")
     
-    # 启动成功日志
-    print("=" * 70)
-    print("🎉 AI平台智能分析系统启动成功！")
-    
-    # 获取本机IP地址
+    # 网络访问信息
+    print_section("网络访问", "🌐")
     import socket
     def get_local_ip():
         try:
-            # 连接到一个远程地址来获取本机IP
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 s.connect(("8.8.8.8", 80))
                 return s.getsockname()[0]
@@ -78,28 +182,33 @@ async def lifespan(app: FastAPI):
     local_ip = get_local_ip()
     port = settings.api_port
     
-    print(f"📍 本地访问: http://localhost:{port}")
-    print(f"🌐 局域网访问: http://{local_ip}:{port}")
-    print(f"📚 API文档: http://localhost:{port}/docs")
-    print(f"🔍 调试页面: http://localhost:{port}/debug")
-    print(f"💓 健康检查: http://localhost:{port}/health")
-    print(f"🔑 认证方式: Bearer Token")
-    print("=" * 70)
+    print_item("本地访问", f"http://localhost:{port}")
+    print_item("局域网访问", f"http://{local_ip}:{port}")
+    print_item("API文档", f"http://localhost:{port}/docs")
+    print_item("关键词配置", f"http://localhost:{port}/api/keyword-config/statistics")
+    
+    # 启动完成
+    print("\n" + "═" * 80)
+    print("🎉 系统启动完成！准备接收请求...")
+    print("═" * 80)
     
     yield
     
     # 关闭时执行
-    print("🛑 AI平台智能分析系统关闭中...")
+    print("\n" + "═" * 80)
+    print("🛑 系统关闭中...")
+    print("═" * 80)
     
-    # 🔥 停止APScheduler调度器
+    # 停止APScheduler调度器
     if apscheduler_service._running:
         await apscheduler_service.stop()
-        print("⏹️ APScheduler调度器已停止")
+        print_item("APScheduler", "已停止", "✅")
     
     # 并发管理器关闭
     concurrency_manager.shutdown()
-    print("⚡ 并发管理器已关闭")
-    print("👋 系统已安全关闭")
+    print_item("并发管理器", "已关闭", "✅")
+    
+    print("\n👋 系统已安全关闭")
 
 
 # 创建FastAPI应用
@@ -136,6 +245,7 @@ app.include_router(security_router, prefix=settings.api_prefix)
 app.include_router(analysis_router, prefix=settings.api_prefix)
 app.include_router(system_router, prefix=settings.api_prefix)
 app.include_router(tasks_router, prefix=settings.api_prefix)
+app.include_router(keyword_config_router, prefix=settings.api_prefix)
 
 # 静态文件处理
 static_dir = os.path.join(os.path.dirname(__file__), "static")

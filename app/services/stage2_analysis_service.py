@@ -14,6 +14,7 @@ from app.db.database import get_db
 from app.services.stage1_work_extraction import stage1_service
 from app.services.llm.llm_factory import get_llm_provider
 from app.services.content_denoiser import content_denoiser
+from app.services.keyword_config_manager import keyword_config_manager
 from app.models.denoise import safe_json_dumps
 from config.settings import settings
 
@@ -29,7 +30,7 @@ class Stage2AnalysisService:
         self.pending_table_name = "ai_work_pending_analysis"
         self.results_table_name = "ai_work_comment_analysis_results"
         self.llm_provider = get_llm_provider()
-        self.keywords_config = self._init_keywords_config()
+        self.keywords_config = {}  # 改为从数据库动态加载
         self.few_shot_examples = self._init_few_shot_examples()
     
     # ==================== 待处理工单获取方法 ====================
@@ -126,37 +127,16 @@ class Stage2AnalysisService:
                     without_comments_count += 1
                     comment_data = None
                     
-                    # 空评论工单直接标记为完成状态
-                    logger.info(f"🚫 工单 {work_id} 没有评论，直接标记为完成")
+                    # 🔥 优化：空评论工单直接标记为完成状态，不保存低风险分析结果
+                    logger.info(f"🚫 工单 {work_id} 没有评论，直接标记为完成（不保存分析结果）")
                     self.stage1.update_work_order_ai_status(
                         db, work_id, 'COMPLETED',
                         comment_count=0,
                         has_comments=False,
-                        error_message="评论为空，无需分析"
+                        error_message="评论为空，低风险不保存分析结果"
                     )
                     
-                    # 为空评论工单保存分析结果
-                    empty_analysis_result = {
-                        "has_evasion": False,
-                        "risk_level": "low",
-                        "confidence_score": 0.0,
-                        "evasion_types": [],
-                        "evidence_sentences": [],
-                        "improvement_suggestions": [],
-                        "sentiment": "neutral",
-                        "sentiment_intensity": 0.0,
-                        "keyword_screening": {"is_suspicious": False, "confidence_score": 0.0, "matched_categories": []},
-                        "llm_analysis": False,
-                        "conversation_text": "",
-                        "analysis_note": "工单无评论内容，跳过分析",
-                        # 🔥 新增：空评论也需要基本的会话信息
-                        "session_start_time": None,
-                        "session_end_time": None,
-                        "total_comments": 0,
-                        "customer_comments": 0,
-                        "service_comments": 0
-                    }
-                    self.save_analysis_result(db, work_id, empty_analysis_result)
+                    # 🔥 不再保存空评论工单的分析结果，因为都是低风险
                 
                 # 构建完整的工单数据
                 work_order_data = {
@@ -809,8 +789,24 @@ class Stage2AnalysisService:
     
     # ==================== 检测引擎方法 ====================
     
-    def _init_keywords_config(self) -> Dict[str, Dict[str, Any]]:
-        """初始化关键词配置"""
+    def _load_keywords_config(self, db: Session) -> Dict[str, Dict[str, Any]]:
+        """从数据库加载关键词配置"""
+        try:
+            logger.debug("从数据库加载关键词配置")
+            config = keyword_config_manager.get_analysis_keywords_config(db)
+            if config:
+                logger.info(f"成功从数据库加载 {len(config)} 个关键词配置分类")
+                return config
+            else:
+                logger.warning("数据库中未找到关键词配置，使用默认配置")
+                return self._get_fallback_keywords_config()
+        except Exception as e:
+            logger.error(f"从数据库加载关键词配置失败: {e}，使用默认配置")
+            return self._get_fallback_keywords_config()
+
+    def _get_fallback_keywords_config(self) -> Dict[str, Dict[str, Any]]:
+        """获取备用的默认关键词配置（原硬编码配置作为备用）"""
+        logger.info("使用备用的默认关键词配置")
         return {
             "紧急催促": {
                 "keywords": [
@@ -985,13 +981,20 @@ class Stage2AnalysisService:
             }
         ]
     
-    def keyword_screening(self, conversation_text: str) -> Dict[str, Any]:
+    def keyword_screening(self, conversation_text: str, db: Session = None) -> Dict[str, Any]:
         """关键词粗筛"""
         matched_categories = []
         total_score = 0.0
         matched_details = {}
         
-        for category, config in self.keywords_config.items():
+        # 动态加载关键词配置
+        if db is not None:
+            keywords_config = self._load_keywords_config(db)
+        else:
+            # 如果没有提供数据库会话，使用默认配置
+            keywords_config = self._get_fallback_keywords_config()
+        
+        for category, config in keywords_config.items():
             category_score = 0.0
             matched_keywords = []
             matched_patterns = []
@@ -1109,7 +1112,7 @@ class Stage2AnalysisService:
     
     # ==================== LLM分析方法 ====================
     
-    async def analyze_single_conversation(self, conversation_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze_single_conversation(self, conversation_data: Dict[str, Any], db: Session = None) -> Dict[str, Any]:
         """分析单个对话"""
         work_id = conversation_data.get("work_id", "未知")
         logger.info(f"🔍 开始分析工单 {work_id} 的对话")
@@ -1128,17 +1131,71 @@ class Stage2AnalysisService:
             
             # 1. 关键词粗筛
             logger.debug(f"🔍 工单 {work_id} 开始关键词粗筛...")
-            keyword_result = self.keyword_screening(conversation_text)
+            keyword_result = self.keyword_screening(conversation_text, db)
             logger.info(f"📊 工单 {work_id} 关键词筛选结果: 可疑={keyword_result['is_suspicious']}, 置信度={keyword_result['confidence_score']:.3f}")
             
-            # 2. 提高LLM分析阈值，减少误检案例
-            # 只有达到一定置信度的关键词匹配才进行LLM分析
+            # 2. 🔥 优化：关键词和正则命中的直接判定为中风险以上，LLM为辅助分析
             if keyword_result["is_suspicious"] and keyword_result["confidence_score"] >= 0.3:
-                logger.info(f"🔍 工单 {work_id} 命中关键词类别: {keyword_result['matched_categories']}，置信度: {keyword_result['confidence_score']:.3f}，将进行LLM深度分析")
-            else:
-                logger.info(f"⏭️ 工单 {work_id} 跳过LLM分析（未达到分析阈值，置信度: {keyword_result['confidence_score']:.3f}）")
+                logger.info(f"🎯 工单 {work_id} 命中关键词类别: {keyword_result['matched_categories']}，置信度: {keyword_result['confidence_score']:.3f}")
                 
-                # 🔧 为低风险记录也构建完整的分析结果，包含会话信息和对话内容
+                # 🔥 新优化逻辑：关键词命中直接判定为中风险以上，不依赖LLM
+                # 根据匹配到的风险级别和置信度确定最终风险级别
+                matched_risk_levels = []
+                evidence_sentences = []
+                matched_keywords = []
+                
+                for category, details in keyword_result["matched_details"].items():
+                    if not details.get("excluded", False):
+                        matched_risk_levels.append(details.get("risk_level", "medium"))
+                        # 收集匹配的关键词作为证据
+                        if details.get("keywords"):
+                            matched_keywords.extend(details["keywords"])
+                            evidence_sentences.extend([f"关键词匹配: {kw}" for kw in details["keywords"]])
+                        # 收集匹配的模式作为证据  
+                        if details.get("patterns"):
+                            evidence_sentences.append(f"模式匹配: {category}")
+                
+                # 确定最终风险级别（取最高风险级别）
+                if "high" in matched_risk_levels:
+                    final_risk_level = "high"
+                elif "medium" in matched_risk_levels:
+                    final_risk_level = "medium"
+                else:
+                    final_risk_level = "medium"  # 默认中风险
+                
+                # 🎯 关键词命中直接构建分析结果，无需LLM分析
+                keyword_based_result = {
+                    "has_evasion": True,  # 关键词命中即认为有规避责任行为
+                    "risk_level": final_risk_level,
+                    "confidence_score": min(keyword_result["confidence_score"], 1.0),
+                    "evasion_types": keyword_result["matched_categories"],
+                    "evidence_sentences": evidence_sentences,
+                    "improvement_suggestions": [f"检测到 {', '.join(keyword_result['matched_categories'])} 相关行为，建议加强服务质量管控和人员培训"],
+                    "sentiment": "negative",  # 关键词命中通常表示负面情况
+                    "sentiment_intensity": 0.7,
+                    "keyword_screening": keyword_result,
+                    "llm_analysis": False,  # 标记未使用LLM
+                    "analysis_note": f"基于关键词和正则匹配直接判定为{final_risk_level}风险，匹配类别: {', '.join(keyword_result['matched_categories'])}",
+                    # 补充会话信息
+                    "session_start_time": conversation_data.get("session_info", {}).get("start_time"),
+                    "session_end_time": conversation_data.get("session_info", {}).get("end_time"),
+                    "total_comments": conversation_data.get("total_messages", 0),
+                    "customer_comments": conversation_data.get("customer_messages", 0),
+                    "service_comments": conversation_data.get("service_messages", 0),
+                    "conversation_text": conversation_text
+                }
+                
+                logger.info(f"✅ 工单 {work_id} 基于关键词直接判定完成: 风险级别={final_risk_level}, 类别={keyword_result['matched_categories']}")
+                
+                return {
+                    "success": True,
+                    "work_id": work_id,
+                    "analysis_result": keyword_based_result
+                }
+            else:
+                logger.info(f"⏭️ 工单 {work_id} 未命中关键词阈值（置信度: {keyword_result['confidence_score']:.3f}），判定为低风险，不保存")
+                
+                # 🔥 新优化：低风险直接返回，不保存到数据库
                 low_risk_result = {
                     "has_evasion": False,
                     "risk_level": "low",
@@ -1149,9 +1206,10 @@ class Stage2AnalysisService:
                     "sentiment": "neutral",
                     "sentiment_intensity": 0.0,
                     "keyword_screening": keyword_result,
-                    "llm_analysis": False,  # 标记未使用LLM
-                    "analysis_note": "关键词置信度未达到LLM分析阈值，初步判定为正常对话",
-                    # 🔥 新增：补充会话信息，确保低风险记录也有完整数据
+                    "llm_analysis": False,
+                    "analysis_note": "未命中关键词阈值，判定为正常对话，不保存到数据库",
+                    "skip_save": True,  # 🔥 标记跳过保存
+                    # 补充会话信息
                     "session_start_time": conversation_data.get("session_info", {}).get("start_time"),
                     "session_end_time": conversation_data.get("session_info", {}).get("end_time"),
                     "total_comments": conversation_data.get("total_messages", 0),
@@ -1166,86 +1224,9 @@ class Stage2AnalysisService:
                     "analysis_result": low_risk_result
                 }
             
-            # 3. 构建提示词并调用LLM，传入关键词筛选上下文
-            logger.info(f"🤖 工单 {work_id} 开始LLM分析...")
-            
-            # 构建包含关键词信息的上下文
-            keyword_context = ""
-            if keyword_result["matched_categories"]:
-                keyword_context = f"关键词粗筛结果：命中类别 {keyword_result['matched_categories']}，置信度 {keyword_result['confidence_score']:.3f}"
-                if keyword_result["matched_details"]:
-                    details = []
-                    for category, detail in keyword_result["matched_details"].items():
-                        if detail["keywords"]:
-                            details.append(f"{category}：关键词 {detail['keywords']}")
-                        if detail["patterns"]:
-                            details.append(f"{category}：模式匹配 {len(detail['patterns'])}个")
-                    keyword_context += f"。详细匹配：{', '.join(details)}"
-            
-            prompt = self.build_analysis_prompt(conversation_text)
-            
-            # 使用analyze_responsibility_evasion方法，传入关键词上下文
-            logger.debug(f"📤 工单 {work_id} 调用LLM服务，上下文: {keyword_context}")
-            llm_response = await self.llm_provider.analyze_responsibility_evasion(
-                conversation_text=conversation_text,
-                context=keyword_context
-            )
-            logger.debug(f"📥 工单 {work_id} LLM响应: {llm_response}")
-            
-            # 4. 处理LLM响应
-            if not llm_response.get("success"):
-                logger.error(f"LLM调用失败: {llm_response.get('error', '未知错误')}")
-                # 使用关键词筛选结果作为备选
-                llm_analysis = {
-                    "has_evasion": keyword_result["is_suspicious"],
-                    "risk_level": "medium" if keyword_result["is_suspicious"] else "low",
-                    "confidence_score": keyword_result["confidence_score"],
-                    "evasion_types": keyword_result["matched_categories"],
-                    "evidence_sentences": [],
-                    "improvement_suggestions": ["LLM分析失败，建议人工审核"],
-                    "sentiment": "neutral",
-                    "sentiment_intensity": 0.0
-                }
-            else:
-                # 获取分析结果并处理字段映射
-                llm_analysis = llm_response.get("analysis", {})
-                
-                # 字段映射：将LLM返回的字段名映射到系统期望的字段名
-                if "confidence" in llm_analysis and "confidence_score" not in llm_analysis:
-                    llm_analysis["confidence_score"] = llm_analysis["confidence"]
-                
-                if "suggestions" in llm_analysis and "improvement_suggestions" not in llm_analysis:
-                    llm_analysis["improvement_suggestions"] = llm_analysis["suggestions"]
-                
-                # 确保必要字段有默认值
-                llm_analysis.setdefault("sentiment", "neutral")
-                llm_analysis.setdefault("sentiment_intensity", 0.0)
-                
-                logger.debug(f"📋 工单 {work_id} LLM分析结果映射后: confidence_score={llm_analysis.get('confidence_score', 'N/A')}")
-                logger.debug(f"📋 工单 {work_id} 完整LLM分析结果: {safe_json_dumps(llm_analysis, ensure_ascii=False)}")
-            
-            # 5. 合并结果
-            logger.debug(f"🔄 工单 {work_id} 合并分析结果...")
-            final_result = {
-                **llm_analysis,
-                "keyword_screening": keyword_result,
-                "llm_analysis": True,
-                "llm_raw_response": llm_response,
-                "session_start_time": conversation_data.get("session_info", {}).get("start_time"),
-                "session_end_time": conversation_data.get("session_info", {}).get("end_time"),
-                "total_comments": conversation_data.get("total_messages", 0),
-                "customer_comments": conversation_data.get("customer_messages", 0),
-                "service_comments": conversation_data.get("service_messages", 0),
-                "conversation_text": conversation_text
-            }
-            
-            logger.info(f"✅ 工单 {work_id} 分析完成: 规避责任={final_result.get('has_evasion', False)}, 风险级别={final_result.get('risk_level', 'low')}")
-            
-            return {
-                "success": True,
-                "work_id": work_id,
-                "analysis_result": final_result
-            }
+            # 🔥 注意：由于现在采用关键词优先的策略，LLM分析部分已被移除
+            # 所有分析决策都基于关键词和正则匹配结果
+            # 这里不应该被执行到，因为上面的逻辑已经处理了所有情况
             
         except Exception as e:
             logger.error(f"❌ 工单 {work_id} 分析对话失败: {e}")
@@ -1313,7 +1294,7 @@ class Stage2AnalysisService:
             async with semaphore:
                 logger.debug(f"🔍 开始分析工单 {work_id}")
                 try:
-                    result = await self.analyze_single_conversation(order["comments_data"])
+                    result = await self.analyze_single_conversation(order["comments_data"], db)
                     logger.debug(f"✅ 工单 {work_id} 分析完成: success={result.get('success', False)}")
                     return result
                 except Exception as e:
@@ -1343,18 +1324,28 @@ class Stage2AnalysisService:
                 continue
             
             if result.get("success"):
-                # 保存分析结果
                 analysis_result = result["analysis_result"]
-                logger.debug(f"💾 保存工单 {work_id} 的分析结果...")
-                if self.save_analysis_result(db, work_id, analysis_result):
-                    # 标记为已完成
-                    self.mark_work_order_completed(db, work_id, analysis_result)
+                
+                # 🔥 新优化：检查是否需要跳过保存（低风险结果）
+                if analysis_result.get("skip_save", False):
+                    logger.info(f"⏭️ 工单 {work_id} 为低风险结果，跳过保存，直接标记为已完成")
+                    # 低风险结果不保存到数据库，但标记工单为已完成
+                    self.stage1.update_work_order_ai_status(db, work_id, 'COMPLETED',
+                                                            error_message="低风险，未保存分析结果")
                     successful_count += 1
-                    logger.debug(f"✅ 工单 {work_id} 处理成功")
+                    logger.debug(f"✅ 工单 {work_id} 低风险处理完成（未保存）")
                 else:
-                    self.mark_work_order_failed(db, work_id, "保存分析结果失败")
-                    failed_count += 1
-                    logger.error(f"❌ 工单 {work_id} 保存分析结果失败")
+                    # 中风险以上才保存分析结果
+                    logger.debug(f"💾 保存工单 {work_id} 的分析结果（风险级别: {analysis_result.get('risk_level', '未知')}）...")
+                    if self.save_analysis_result(db, work_id, analysis_result):
+                        # 🔥 修复：标记为已完成，但不再重复保存分析结果
+                        self.mark_work_order_completed(db, work_id, None)  # 传入None避免重复保存
+                        successful_count += 1
+                        logger.debug(f"✅ 工单 {work_id} 处理成功（已保存）")
+                    else:
+                        self.mark_work_order_failed(db, work_id, "保存分析结果失败")
+                        failed_count += 1
+                        logger.error(f"❌ 工单 {work_id} 保存分析结果失败")
             else:
                 error_msg = result.get("error", "未知错误")
                 logger.error(f"❌ 工单 {work_id} 分析失败: {error_msg}")

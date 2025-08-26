@@ -28,10 +28,19 @@ class APSchedulerService:
             )
         }
         
+        # 🔥 优化：增加执行器的线程池大小，提升并发处理能力
+        import os
+        cpu_count = os.cpu_count() or 4
+        
+        # 根据CPU核数和系统配置动态设置线程池大小
+        scheduler_workers = max(20, cpu_count * 3)  # 至少20个，或CPU核数的3倍
+        
         # 配置执行器
         executors = {
-            'default': ThreadPoolExecutor(max_workers=10),
+            'default': ThreadPoolExecutor(max_workers=scheduler_workers),
         }
+        
+        logger.info(f"🔧 APScheduler执行器配置: {scheduler_workers} 个线程 (CPU核数: {cpu_count})")
         
         # 作业默认配置
         job_defaults = {

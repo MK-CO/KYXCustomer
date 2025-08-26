@@ -25,21 +25,30 @@ class ConcurrencyManager:
         if self._initialized:
             return
             
-        # 创建线程池用于I/O密集型任务（如数据库操作、API调用）
+        # 🔥 优化：增加线程池大小，更好地处理I/O密集型任务（如数据库操作、API调用）
+        import os
+        cpu_count = os.cpu_count() or 4
+        
+        # 线程池：适合I/O密集型任务，可以设置较大的数量
+        thread_workers = max(settings.concurrency_max_workers, cpu_count * 4)  # 至少CPU核数的4倍
+        
         self._thread_pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=settings.concurrency_max_workers,
+            max_workers=thread_workers,
             thread_name_prefix="ai-platform-worker"
         )
         
-        # 创建进程池用于CPU密集型任务（如大量数据处理）
+        # 进程池：适合CPU密集型任务，不要超过CPU核数
+        process_workers = min(settings.concurrency_background_workers, cpu_count)
+        
         self._process_pool = concurrent.futures.ProcessPoolExecutor(
-            max_workers=min(4, settings.concurrency_background_workers)
+            max_workers=process_workers
         )
         
         self._initialized = True
         logger.info(f"🚀 并发管理器已初始化:")
-        logger.info(f"  📊 线程池大小: {settings.concurrency_max_workers}")
-        logger.info(f"  ⚙️ 进程池大小: {min(4, settings.concurrency_background_workers)}")
+        logger.info(f"  📊 线程池大小: {thread_workers} (CPU核数: {cpu_count})")
+        logger.info(f"  ⚙️ 进程池大小: {process_workers}")
+        logger.info(f"  🎯 推荐配置: I/O密集型用线程池，CPU密集型用进程池")
     
     async def run_in_thread(self, func: Callable, *args, **kwargs) -> Any:
         """在线程池中运行I/O密集型任务"""

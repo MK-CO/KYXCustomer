@@ -11,18 +11,50 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+# 导入关键词配置管理器（延迟导入避免循环依赖）
+def _get_keyword_config_manager():
+    """延迟导入关键词配置管理器"""
+    from app.services.keyword_config_manager import keyword_config_manager
+    return keyword_config_manager
+
 
 class ContentDenoiser:
     """内容去噪器，用于过滤工单评论中的噪音数据"""
     
     def __init__(self):
         """初始化去噪器"""
-        self.normal_operation_patterns = self._init_normal_operation_patterns()
-        self.invalid_data_patterns = self._init_invalid_data_patterns()
-        self.system_keywords = self._init_system_keywords()
+        # 改为动态加载配置，不再使用硬编码
+        self.normal_operation_patterns = []
+        self.invalid_data_patterns = []
+        self.system_keywords = []
+
+    def _load_denoise_config(self, db: Session):
+        """从数据库加载去噪配置"""
+        try:
+            config_manager = _get_keyword_config_manager()
+            
+            # 加载正常操作模式
+            normal_patterns = config_manager.get_denoise_patterns(db, "normal_operation")
+            self.normal_operation_patterns = normal_patterns
+            
+            # 加载无效数据模式
+            invalid_patterns = config_manager.get_denoise_patterns(db, "invalid_data")
+            self.invalid_data_patterns = invalid_patterns
+            
+            # 加载系统关键词
+            system_keywords = config_manager.get_system_keywords(db)
+            self.system_keywords = system_keywords
+            
+            logger.info(f"成功从数据库加载去噪配置: 正常操作模式 {len(normal_patterns)} 个, 无效数据模式 {len(invalid_patterns)} 个, 系统关键词 {len(system_keywords)} 个")
+            
+        except Exception as e:
+            logger.error(f"从数据库加载去噪配置失败: {e}，使用默认配置")
+            self.normal_operation_patterns = self._get_fallback_normal_patterns()
+            self.invalid_data_patterns = self._get_fallback_invalid_patterns()
+            self.system_keywords = self._get_fallback_system_keywords()
     
-    def _init_normal_operation_patterns(self) -> List[Dict[str, Any]]:
-        """初始化正常操作模式"""
+    def _get_fallback_normal_patterns(self) -> List[Dict[str, Any]]:
+        """获取备用的正常操作模式配置"""
         return [
             {
                 "name": "工单关闭操作",
@@ -74,8 +106,8 @@ class ContentDenoiser:
             }
         ]
     
-    def _init_invalid_data_patterns(self) -> List[Dict[str, Any]]:
-        """初始化无效数据模式"""
+    def _get_fallback_invalid_patterns(self) -> List[Dict[str, Any]]:
+        """获取备用的无效数据模式配置"""
         return [
             {
                 "name": "重复数字",
@@ -115,8 +147,8 @@ class ContentDenoiser:
             }
         ]
     
-    def _init_system_keywords(self) -> List[str]:
-        """初始化系统关键词"""
+    def _get_fallback_system_keywords(self) -> List[str]:
+        """获取备用的系统关键词配置"""
         return [
             "系统", "自动", "通知", "提醒", "分配", "转派",
             "【完结】", "【处理中】", "【待处理】", "【已分配】", "【自动完结工单】",
@@ -124,7 +156,7 @@ class ContentDenoiser:
             "已撤单", "订单已派单", "派单成功", "撤单成功", "订单状态"
         ]
     
-    def is_normal_operation(self, content: str, user_type: str = None, name: str = None) -> Tuple[bool, str]:
+    def is_normal_operation(self, content: str, user_type: str = None, name: str = None, db: Session = None) -> Tuple[bool, str]:
         """
         判断是否为正常操作记录
         
@@ -132,6 +164,7 @@ class ContentDenoiser:
             content: 评论内容
             user_type: 用户类型 (system, service, customer)
             name: 用户名称
+            db: 数据库会话（用于加载配置）
             
         Returns:
             (是否为正常操作, 匹配的规则描述)
@@ -140,6 +173,10 @@ class ContentDenoiser:
             return False, ""
         
         content = content.strip()
+        
+        # 如果提供了数据库会话且配置为空，则加载配置
+        if db is not None and (not self.normal_operation_patterns or not self.system_keywords):
+            self._load_denoise_config(db)
         
         # 1. 检查是否为系统用户的操作
         if user_type == "system":
@@ -152,8 +189,12 @@ class ContentDenoiser:
         
         # 3. 检查正常操作模式
         for pattern_config in self.normal_operation_patterns:
-            if re.search(pattern_config["pattern"], content, re.IGNORECASE):
-                return True, pattern_config["description"]
+            # 兼容两种数据格式：数据库格式和原硬编码格式
+            pattern = pattern_config.get("pattern") or pattern_config.get("pattern_value")
+            description = pattern_config.get("description")
+            
+            if pattern and re.search(pattern, content, re.IGNORECASE):
+                return True, description or "正常操作模式"
         
         # 4. 检查特定格式的正常操作
         # 工单客服的标准操作格式
@@ -163,12 +204,13 @@ class ContentDenoiser:
         
         return False, ""
     
-    def is_invalid_data(self, content: str) -> Tuple[bool, str]:
+    def is_invalid_data(self, content: str, db: Session = None) -> Tuple[bool, str]:
         """
         判断是否为无效数据
         
         Args:
             content: 评论内容
+            db: 数据库会话（用于加载配置）
             
         Returns:
             (是否为无效数据, 匹配的规则描述)
@@ -182,10 +224,18 @@ class ContentDenoiser:
         if not content:
             return True, "空白内容"
         
+        # 如果提供了数据库会话且配置为空，则加载配置
+        if db is not None and not self.invalid_data_patterns:
+            self._load_denoise_config(db)
+        
         # 检查无效数据模式
         for pattern_config in self.invalid_data_patterns:
-            if re.match(pattern_config["pattern"], content, re.IGNORECASE):
-                return True, pattern_config["description"]
+            # 兼容两种数据格式：数据库格式和原硬编码格式
+            pattern = pattern_config.get("pattern") or pattern_config.get("pattern_value")
+            description = pattern_config.get("description")
+            
+            if pattern and re.match(pattern, content, re.IGNORECASE):
+                return True, description or "无效数据模式"
         
         # 检查内容长度（太短可能无意义）
         if len(content) <= 2 and not re.match(r'^[\u4e00-\u9fff]+$', content):  # 非中文且过短
@@ -193,12 +243,13 @@ class ContentDenoiser:
         
         return False, ""
     
-    def should_filter_comment(self, comment: Dict[str, Any]) -> Tuple[bool, str]:
+    def should_filter_comment(self, comment: Dict[str, Any], db: Session = None) -> Tuple[bool, str]:
         """
         判断评论是否应该被过滤
         
         Args:
             comment: 评论数据字典，包含content, user_type, name等字段
+            db: 数据库会话（用于加载配置）
             
         Returns:
             (是否应该过滤, 过滤原因)
@@ -208,23 +259,24 @@ class ContentDenoiser:
         name = comment.get("name", "")
         
         # 1. 检查是否为正常操作
-        is_normal, normal_reason = self.is_normal_operation(content, user_type, name)
+        is_normal, normal_reason = self.is_normal_operation(content, user_type, name, db)
         if is_normal:
             return True, f"正常操作: {normal_reason}"
         
         # 2. 检查是否为无效数据
-        is_invalid, invalid_reason = self.is_invalid_data(content)
+        is_invalid, invalid_reason = self.is_invalid_data(content, db)
         if is_invalid:
             return True, f"无效数据: {invalid_reason}"
         
         return False, ""
     
-    def filter_comments(self, comments: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def filter_comments(self, comments: List[Dict[str, Any]], db: Session = None) -> Dict[str, Any]:
         """
         过滤评论列表，去除噪音数据
         
         Args:
             comments: 评论列表
+            db: 数据库会话（用于加载配置）
             
         Returns:
             {
@@ -251,7 +303,7 @@ class ContentDenoiser:
         filter_reasons = {}
         
         for i, comment in enumerate(comments):
-            should_filter, reason = self.should_filter_comment(comment)
+            should_filter, reason = self.should_filter_comment(comment, db)
             
             if should_filter:
                 removed_comments.append({

@@ -1531,23 +1531,30 @@
                 const result = await apiRequest(`/api/v1/tasks/full-task-range?${params.toString()}`, 'POST');
 
                 if (result && result.success) {
-                    const extractionSummary = result.extraction_summary || {};
-                    const analysisSummary = result.analysis_summary || {};
-                    
                     const taskId = result.task_id;
-                    showResult(`✅ 任务启动成功！
-任务ID: ${taskId || 'N/A'}
-时间范围: ${startDate} ~ ${endDate}
-抽取数据: ${extractionSummary.extracted || 0} 条
-成功分析: ${analysisSummary.successful || 0} 条
-⏱️ 正在监控任务进度...
+                    const asyncTaskId = result.async_task_id;
+                    const timeRange = result.time_range;
+                    const status = result.status; // should be "submitted"
+                    
+                    showResult(`🚀 任务已提交到后台执行！
+📋 任务ID: ${taskId || 'N/A'}
+🆔 异步任务ID: ${asyncTaskId || 'N/A'}
+📅 时间范围: ${timeRange || `${startDate} ~ ${endDate}`}
+📊 状态: ${status === 'submitted' ? '已提交' : status}
+⏱️ 任务正在后台执行中...
+
+💡 可以通过 "查看任务记录" 监控执行进度
 ${result.message || ''}`, 'success');
                     
-                    // 任务已启动，可以点击查看记录进行状态监控
-                    
+                    // 任务已启动，刷新任务配置以显示新任务
                     setTimeout(() => refreshTaskConfigs(), 1000);
+                    
+                    // 🔥 可选：启动轮询监控任务状态
+                    if (taskId) {
+                        startTaskStatusPolling(taskId);
+                    }
                 } else {
-                    showResult(`❌ 任务执行失败: ${result?.message || '未知错误'}`, 'error');
+                    showResult(`❌ 任务提交失败: ${result?.message || '未知错误'}`, 'error');
                 }
             } catch (error) {
                 console.error('确认任务执行错误:', error);

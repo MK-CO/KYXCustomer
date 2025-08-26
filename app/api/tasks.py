@@ -155,6 +155,118 @@ async def get_task_record_detail(
         raise HTTPException(status_code=500, detail=f"获取任务记录详情失败: {str(e)}")
 
 
+@router.get("/status/{task_id}", summary="获取任务实时状态 - 供前端轮询使用")
+async def get_task_status(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    获取任务实时状态 - 专为前端轮询设计
+    
+    **返回**: 
+    - **status**: 任务状态 (running, completed, failed, cancelled, pending)
+    - **progress**: 进度信息 (百分比、已处理数量等)
+    - **stage**: 当前执行阶段
+    - **message**: 状态描述信息
+    - **can_terminate**: 是否可以终止
+    - **last_update**: 最后更新时间
+    """
+    try:
+        record = task_record.get_task_record(db, task_id)
+        
+        if not record:
+            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+        
+        task_status = record.get("status", "")
+        process_stage = record.get("process_stage", "")
+        
+        # 计算进度百分比
+        total_records = record.get("total_records", 0)
+        processed_records = record.get("processed_records", 0)
+        
+        progress_percentage = 0
+        if total_records > 0:
+            progress_percentage = min(100, round((processed_records / total_records) * 100, 1))
+        elif task_status == "completed":
+            progress_percentage = 100
+        
+        # 构建进度信息
+        progress_info = {
+            "percentage": progress_percentage,
+            "total_records": total_records,
+            "processed_records": processed_records,
+            "success_records": record.get("success_records", 0),
+            "failed_records": record.get("failed_records", 0),
+            "extracted_records": record.get("extracted_records", 0),
+            "analyzed_records": record.get("analyzed_records", 0),
+            "skipped_records": record.get("skipped_records", 0)
+        }
+        
+        # 生成状态消息
+        status_messages = {
+            "running": f"正在执行 - {process_stage}" if process_stage else "正在执行",
+            "completed": f"执行完成 - 处理了{processed_records}条记录",
+            "failed": f"执行失败 - {record.get('error_message', '未知错误')}",
+            "cancelled": f"已取消 - {record.get('error_message', '用户取消')}",
+            "pending": "等待执行"
+        }
+        
+        # 检查异步任务管理器中的状态
+        from app.core.concurrency import async_task_manager
+        async_task_status = None
+        
+        # 尝试从执行详情中获取async_task_id
+        execution_details = record.get("execution_details", {})
+        if isinstance(execution_details, str):
+            import json
+            try:
+                execution_details = json.loads(execution_details)
+            except:
+                execution_details = {}
+        
+        # 检查是否有对应的异步任务
+        async_task_id = None
+        for running_task_id in async_task_manager.running_tasks.keys():
+            if task_id in running_task_id:
+                async_task_id = running_task_id
+                break
+        
+        if async_task_id:
+            async_task_status = async_task_manager.get_task_status(async_task_id)
+        
+        return {
+            "success": True,
+            "task_id": task_id,
+            "status": task_status,
+            "status_display": {
+                "running": "运行中",
+                "completed": "已完成", 
+                "failed": "失败",
+                "cancelled": "已取消",
+                "pending": "等待中"
+            }.get(task_status, task_status),
+            "stage": process_stage,
+            "progress": progress_info,
+            "message": status_messages.get(task_status, f"状态: {task_status}"),
+            "can_terminate": task_status in ["running", "pending"],
+            "is_active": task_status in ["running", "pending"],
+            "last_update": record.get("updated_at"),
+            "created_at": record.get("created_at"),
+            "async_task_info": {
+                "async_task_id": async_task_id,
+                "async_status": async_task_status
+            } if async_task_id else None,
+            "execution_details": execution_details
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取任务状态失败: {task_id}, {e}")
+        raise HTTPException(status_code=500, detail=f"获取任务状态失败: {str(e)}")
+
+
 @router.get("/statistics", summary="获取任务统计信息")
 async def get_task_statistics(
     days: int = Query(7, description="统计天数", ge=1, le=90),
@@ -176,14 +288,14 @@ async def get_task_statistics(
         raise HTTPException(status_code=500, detail=f"获取任务统计失败: {str(e)}")
 
 
-@router.post("/manual-analysis", summary="手动执行分析任务")
+@router.post("/manual-analysis", summary="手动执行分析任务 - 后台异步执行")
 async def run_manual_analysis(
     limit: int = Query(50, description="分析记录数限制", ge=1, le=500),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    手动触发分析任务
+    手动触发分析任务 - 后台异步执行，立即返回任务ID
     
     - **limit**: 分析记录数限制 (1-500)
     """
@@ -207,35 +319,65 @@ async def run_manual_analysis(
         
         logger.info(f"🔧 用户 {username} 手动触发分析任务，限制: {limit} 条")
         
-        # 🚀 直接使用stage2分析服务执行手动分析
-        from app.services.stage2_analysis_service import stage2_service
-        
-        result = await stage2_service.process_pending_analysis_queue(
+        # 🔥 创建任务记录
+        main_task_id = task_record.create_task_record(
             db=db,
-            batch_size=limit,
-            max_concurrent=5
+            task_name="手动执行分析任务",
+            task_type="manual_analysis",
+            trigger_type="manual",
+            trigger_user=username,
+            task_config_key="customer_service_analysis",
+            execution_details={
+                "description": "手动触发的分析任务",
+                "analysis_limit": limit,
+                "requested_by": username
+            }
         )
         
-        # 格式化返回结果以保持API兼容性
-        if result.get("success"):
-            analysis_stats = result.get("analysis_statistics", {})
-            result["task_id"] = f"manual_{int(datetime.now().timestamp())}"
+        # 🔥 提交到后台异步执行，立即返回任务ID
+        from app.core.concurrency import async_task_manager
+        import uuid
         
-        return result
+        async_task_id = f"manual_analysis_{uuid.uuid4().hex[:16]}"
+        success = await async_task_manager.submit_task(
+            async_task_id,
+            run_manual_analysis_async(db, limit, username, main_task_id)
+        )
+        
+        if not success:
+            # 任务提交失败，更新数据库记录
+            task_record.complete_task(
+                db=db,
+                task_id=main_task_id,
+                status="failed", 
+                error_message="任务提交到后台队列失败"
+            )
+            raise HTTPException(status_code=500, detail="任务提交失败")
+        
+        # 立即返回任务ID，不等待完成
+        return {
+            "success": True,
+            "task_id": main_task_id,
+            "async_task_id": async_task_id,
+            "status": "submitted",
+            "message": f"手动分析任务已提交到后台执行，限制: {limit} 条",
+            "analysis_limit": limit,
+            "check_status_url": f"/api/v1/tasks/status/{main_task_id}"
+        }
         
     except Exception as e:
         logger.error(f"手动执行分析任务失败: {e}")
         raise HTTPException(status_code=500, detail=f"手动执行分析任务失败: {str(e)}")
 
 
-@router.post("/manual-extraction", summary="手动执行数据抽取任务")
+@router.post("/manual-extraction", summary="手动执行数据抽取任务 - 后台异步执行")
 async def run_manual_extraction(
     target_date: Optional[str] = Query(None, description="目标日期 (YYYY-MM-DD)，默认为昨天"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    手动触发数据抽取任务
+    手动触发数据抽取任务 - 后台异步执行，立即返回任务ID
     
     - **target_date**: 目标日期，格式为 YYYY-MM-DD，默认为昨天
     """
@@ -269,91 +411,41 @@ async def run_manual_extraction(
         
         logger.info(f"🔧 用户 {username} 手动触发数据抽取任务: {task_id}, 目标日期: {target_datetime.date()}")
         
-        # 更新进度
-        task_record.update_task_progress(
-            db=db,
-            task_id=task_id,
-            process_stage="数据抽取中"
+        # 🔥 提交到后台异步执行，立即返回任务ID
+        from app.core.concurrency import async_task_manager
+        import uuid
+        
+        async_task_id = f"manual_extraction_{uuid.uuid4().hex[:16]}"
+        success = await async_task_manager.submit_task(
+            async_task_id,
+            run_manual_extraction_async(db, target_datetime, username, task_id)
         )
         
-        from app.services.stage1_work_extraction import stage1_service
-        
-        # 执行数据抽取
-        extraction_result = stage1_service.extract_work_data_by_time_range(
-            db=db,
-            target_date=target_datetime
-        )
-        
-        if extraction_result.get("success"):
-            stats = extraction_result.get("statistics", {})
-            extracted = stats.get("extracted", 0)
-            inserted = stats.get("inserted", 0)
-            
-            # 完成任务
+        if not success:
+            # 任务提交失败，更新数据库记录
             task_record.complete_task(
                 db=db,
                 task_id=task_id,
-                status="completed",
-                execution_details={
-                    "extraction_result": extraction_result,
-                    "completed_at": datetime.now().isoformat()
-                }
+                status="failed", 
+                error_message="任务提交到后台队列失败"
             )
-            
-            # 更新统计
-            task_record.update_task_progress(
-                db=db,
-                task_id=task_id,
-                total_records=extracted,
-                extracted_records=extracted,
-                success_records=inserted
-            )
-            
-            logger.info(f"✅ 手动数据抽取完成: 抽取{extracted}条，插入{inserted}条")
-            
-            return {
-                "success": True,
-                "task_id": task_id,
-                "message": f"数据抽取完成: 抽取{extracted}条，插入{inserted}条",
-                "statistics": stats,
-                "target_date": target_datetime.strftime("%Y-%m-%d")
-            }
-        else:
-            error_msg = extraction_result.get("message", "未知错误")
-            
-            # 标记任务失败
-            task_record.complete_task(
-                db=db,
-                task_id=task_id,
-                status="failed",
-                error_message=error_msg,
-                execution_details=extraction_result
-            )
-            
-            return {
-                "success": False,
-                "task_id": task_id,
-                "message": f"数据抽取失败: {error_msg}",
-                "error": error_msg
-            }
+            raise HTTPException(status_code=500, detail="任务提交失败")
+        
+        # 立即返回任务ID，不等待完成
+        return {
+            "success": True,
+            "task_id": task_id,
+            "async_task_id": async_task_id,
+            "status": "submitted",
+            "message": f"数据抽取任务已提交到后台执行",
+            "target_date": target_datetime.strftime("%Y-%m-%d"),
+            "check_status_url": f"/api/v1/tasks/status/{task_id}"
+        }
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"手动执行数据抽取任务失败: {e}")
-        
-        # 如果任务记录已创建，标记为失败
-        if 'task_id' in locals():
-            try:
-                task_record.complete_task(
-                    db=db,
-                    task_id=task_id,
-                    status="failed",
-                    error_message=str(e)
-                )
-            except:
-                pass
-        
         raise HTTPException(status_code=500, detail=f"手动执行数据抽取任务失败: {str(e)}")
 
 
@@ -1486,6 +1578,150 @@ def _format_datetime_display(datetime_str: Optional[str]) -> str:
 
 
 # ==================== 后台异步执行函数 ====================
+
+async def run_manual_extraction_async(db: Session, target_datetime: datetime, username: str, main_task_id: str):
+    """异步执行手动数据抽取任务"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info(f"🚀 开始异步手动数据抽取任务: {main_task_id}, 用户: {username}, 目标日期: {target_datetime.date()}")
+        
+        # 更新进度
+        task_record.update_task_progress(
+            db=db,
+            task_id=main_task_id,
+            process_stage="数据抽取中"
+        )
+        
+        from app.services.stage1_work_extraction import stage1_service
+        
+        # 执行数据抽取
+        extraction_result = stage1_service.extract_work_data_by_time_range(
+            db=db,
+            target_date=target_datetime
+        )
+        
+        if extraction_result.get("success"):
+            stats = extraction_result.get("statistics", {})
+            extracted = stats.get("extracted", 0)
+            inserted = stats.get("inserted", 0)
+            skipped = stats.get("skipped", 0)
+            
+            # 完成任务
+            final_details = {
+                "extraction_result": extraction_result,
+                "statistics": stats,
+                "target_date": target_datetime.strftime("%Y-%m-%d"),
+                "completion_message": f"抽取{extracted}条，插入{inserted}条，跳过{skipped}条"
+            }
+            
+            task_record.complete_task(
+                db=db,
+                task_id=main_task_id,
+                status="completed",
+                execution_details=final_details
+            )
+            
+            # 更新统计
+            task_record.update_task_progress(
+                db=db,
+                task_id=main_task_id,
+                total_records=extracted,
+                extracted_records=extracted,
+                success_records=inserted,
+                skipped_records=skipped
+            )
+            
+            logger.info(f"✅ 手动数据抽取完成: 抽取{extracted}条，插入{inserted}条，跳过{skipped}条")
+            return final_details
+        else:
+            raise Exception(f"数据抽取失败: {extraction_result.get('message', '未知错误')}")
+        
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"❌ 异步手动数据抽取任务失败: {error_msg}")
+        
+        # 标记任务失败
+        task_record.complete_task(
+            db=db,
+            task_id=main_task_id,
+            status="failed",
+            error_message=error_msg
+        )
+        
+        return {"error": error_msg}
+
+
+async def run_manual_analysis_async(db: Session, limit: int, username: str, main_task_id: str):
+    """异步执行手动分析任务"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info(f"🚀 开始异步手动分析任务: {main_task_id}, 用户: {username}, 限制: {limit}")
+        
+        # 更新任务状态为运行中
+        task_record.update_task_progress(
+            db=db,
+            task_id=main_task_id,
+            process_stage="批量分析中"
+        )
+        
+        # 执行分析
+        from app.services.stage2_analysis_service import stage2_service
+        
+        result = await stage2_service.process_pending_analysis_queue(
+            db=db,
+            batch_size=limit,
+            max_concurrent=5
+        )
+        
+        if result.get("success"):
+            analysis_stats = result.get("analysis_statistics", {})
+            successful = analysis_stats.get("successful_analyses", 0)
+            failed = analysis_stats.get("failed_analyses", 0)
+            total_analyzed = analysis_stats.get("analyzed_orders", 0)
+            skipped_orders = analysis_stats.get("skipped_orders", 0)
+            
+            # 完成任务
+            final_details = {
+                "analysis_summary": {
+                    "analyzed": total_analyzed,
+                    "successful": successful,
+                    "failed": failed,
+                    "skipped": skipped_orders,
+                    "limit": limit
+                },
+                "completion_message": f"成功分析{successful}条，失败{failed}条，跳过{skipped_orders}条"
+            }
+            
+            task_record.complete_task(
+                db=db,
+                task_id=main_task_id,
+                status="completed",
+                execution_details=final_details
+            )
+            
+            logger.info(f"✅ 手动分析任务完成: 成功{successful}条，失败{failed}条")
+            return final_details
+        else:
+            raise Exception(f"分析失败: {result.get('message', '未知错误')}")
+        
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"❌ 异步手动分析任务失败: {error_msg}")
+        
+        # 标记任务失败
+        task_record.complete_task(
+            db=db,
+            task_id=main_task_id,
+            status="failed",
+            error_message=error_msg
+        )
+        
+        return {"error": error_msg}
+
 
 async def run_full_task_async(db: Session, target_datetime: datetime, analysis_limit: int, username: str, main_task_id: str):
     """异步执行完整任务流程"""
