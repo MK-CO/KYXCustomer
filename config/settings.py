@@ -84,7 +84,7 @@ class Settings:
     @property
     def database_url(self) -> str:
         """获取数据库连接URL"""
-        return f"mysql+pymysql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}?charset=utf8mb4"
+        return f"mysql+pymysql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}?charset=utf8mb4&use_unicode=true&collation=utf8mb4_unicode_ci"
     
     # LLM配置
     @property

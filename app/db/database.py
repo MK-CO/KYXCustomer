@@ -18,7 +18,12 @@ engine = create_engine(
     pool_recycle=3600,
     pool_timeout=30,     # 添加连接超时
     pool_reset_on_return='commit',  # 返回时重置连接状态
-    echo=settings.log_sql_enabled  # 根据配置决定是否显示SQL日志
+    echo=settings.log_sql_enabled,  # 根据配置决定是否显示SQL日志
+    # 🔥 修复：添加明确的字符集配置
+    connect_args={
+        "charset": "utf8mb4",
+        "init_command": "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci"
+    }
 )
 
 # 创建会话工厂

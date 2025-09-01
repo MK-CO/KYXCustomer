@@ -82,6 +82,7 @@ class KeywordConfigManager:
                 # 查询该分类下的关键词配置
                 keyword_sql = """
                 SELECT 
+                    id,
                     keyword_type,
                     keyword_value,
                     weight,

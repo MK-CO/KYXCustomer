@@ -1090,60 +1090,152 @@ class Stage2AnalysisService:
             }
         ]
     
-    def _extract_evidence_sentences(self, conversation_text: str, keyword: str, category: str) -> List[str]:
-        """提取包含关键词的具体句子和上下文"""
+    def _extract_evidence_sentences(self, messages: List[Dict[str, Any]], keyword: str, category: str, config_id: int = None) -> List[Dict[str, Any]]:
+        """从消息列表中提取包含关键词的具体消息，返回结构化JSON格式"""
         evidence_list = []
         
-        # 将对话文本按句子分割（支持多种标点符号）
-        import re
-        sentences = re.split(r'[。！？；\n]', conversation_text)
-        
-        for i, sentence in enumerate(sentences):
-            sentence = sentence.strip()
-            if not sentence:
+        for i, message in enumerate(messages):
+            content = str(message.get("content", "")).strip()
+            if not content:
                 continue
                 
-            # 如果句子包含关键词
-            if keyword in sentence:
-                # 构建上下文（前一句 + 当前句 + 后一句）
-                context_parts = []
+            # 如果这条消息包含关键词
+            if keyword in content:
+                # 构建显示用的消息格式
+                user_type = message.get("user_type", "")
+                name = message.get("name", "")
+                create_time = message.get("create_time", "")
+                oper = message.get("oper", False)
                 
-                # 前一句
-                if i > 0 and sentences[i-1].strip():
-                    context_parts.append(f"上文: {sentences[i-1].strip()}")
+                # 确定角色显示名称
+                if user_type == "customer":
+                    role = "客户"
+                elif user_type == "service" or oper:
+                    role = "客服"
+                elif user_type == "system":
+                    role = "系统"
+                else:
+                    role = user_type or "未知"
                 
-                # 当前句（高亮关键词）
-                highlighted_sentence = sentence.replace(keyword, f"【{keyword}】")
-                context_parts.append(f"匹配句: {highlighted_sentence}")
+                # 如果有名称，添加到角色后面
+                if name:
+                    role_display = f"{role}({name})"
+                else:
+                    role_display = role
                 
-                # 后一句
-                if i < len(sentences) - 1 and sentences[i+1].strip():
-                    context_parts.append(f"下文: {sentences[i+1].strip()}")
+                # 构建完整的消息显示
+                if create_time:
+                    message_display = f"[{create_time}] {role_display}: {content}"
+                else:
+                    message_display = f"{role_display}: {content}"
                 
-                evidence_entry = f"[{category}] " + " | ".join(context_parts)
+                # 高亮关键词
+                highlighted_content = content.replace(keyword, f"【{keyword}】")
+                if create_time:
+                    highlighted_display = f"[{create_time}] {role_display}: {highlighted_content}"
+                else:
+                    highlighted_display = f"{role_display}: {highlighted_content}"
+                
+                # 构建结构化的证据条目
+                evidence_entry = {
+                    "rule_type": "keyword",  # 规则类型：keyword 或 pattern
+                    "rule_name": category,  # 规则名称/类别
+                    "category": category,   # 分类名称
+                    "matched_keyword": keyword,  # 匹配的关键词
+                    "matched_pattern": None,    # 正则表达式（关键词匹配时为空）
+                    "matched_text": keyword,    # 实际匹配的文本
+                    "message_content": content,  # 原始消息内容
+                    "conversation_context": message_display,  # 完整消息显示格式
+                    "highlighted_context": highlighted_display,   # 高亮后的消息显示
+                    "config_id": config_id,    # 配置ID
+                    "message_index": i,       # 消息在列表中的索引
+                    "message_id": message.get("id"),  # 消息ID
+                    "user_type": user_type,   # 用户类型
+                    "user_name": name,        # 用户姓名
+                    "create_time": create_time, # 消息创建时间
+                    "evidence_timestamp": datetime.now().isoformat()  # 证据提取时间戳
+                }
+                
                 evidence_list.append(evidence_entry)
         
         return evidence_list
     
-    def _extract_pattern_evidence(self, conversation_text: str, patterns: List[str], category: str) -> List[str]:
-        """提取匹配正则模式的具体内容"""
+    def _extract_pattern_evidence(self, messages: List[Dict[str, Any]], patterns: List[str], category: str, config_id: int = None) -> List[Dict[str, Any]]:
+        """从消息列表中提取匹配正则模式的具体内容，返回结构化JSON格式"""
         evidence_list = []
         import re
         
         for pattern in patterns:
             try:
-                matches = re.finditer(pattern, conversation_text, re.DOTALL)
-                for match in matches:
-                    matched_text = match.group()
-                    start_pos = max(0, match.start() - 20)  # 前20个字符作为上下文
-                    end_pos = min(len(conversation_text), match.end() + 20)  # 后20个字符作为上下文
+                # 对每条消息单独进行正则匹配
+                for i, message in enumerate(messages):
+                    content = str(message.get("content", "")).strip()
+                    if not content:
+                        continue
                     
-                    context = conversation_text[start_pos:end_pos]
-                    highlighted_context = context.replace(matched_text, f"【{matched_text}】")
-                    
-                    evidence_entry = f"[{category}-正则] 匹配内容: {highlighted_context}"
-                    evidence_list.append(evidence_entry)
-                    
+                    matches = re.finditer(pattern, content, re.IGNORECASE)
+                    for match in matches:
+                        matched_text = match.group()
+                        
+                        # 构建显示用的消息格式
+                        user_type = message.get("user_type", "")
+                        name = message.get("name", "")
+                        create_time = message.get("create_time", "")
+                        oper = message.get("oper", False)
+                        
+                        # 确定角色显示名称
+                        if user_type == "customer":
+                            role = "客户"
+                        elif user_type == "service" or oper:
+                            role = "客服"
+                        elif user_type == "system":
+                            role = "系统"
+                        else:
+                            role = user_type or "未知"
+                        
+                        # 如果有名称，添加到角色后面
+                        if name:
+                            role_display = f"{role}({name})"
+                        else:
+                            role_display = role
+                        
+                        # 构建完整的消息显示
+                        if create_time:
+                            message_display = f"[{create_time}] {role_display}: {content}"
+                        else:
+                            message_display = f"{role_display}: {content}"
+                        
+                        # 高亮匹配的内容
+                        highlighted_content = content.replace(matched_text, f"【{matched_text}】")
+                        if create_time:
+                            highlighted_display = f"[{create_time}] {role_display}: {highlighted_content}"
+                        else:
+                            highlighted_display = f"{role_display}: {highlighted_content}"
+                        
+                        # 构建结构化的证据条目
+                        evidence_entry = {
+                            "rule_type": "pattern",  # 规则类型：keyword 或 pattern
+                            "rule_name": category,   # 规则名称/类别
+                            "category": category,    # 分类名称
+                            "matched_keyword": None, # 匹配的关键词（正则匹配时为空）
+                            "matched_pattern": pattern,  # 正则表达式
+                            "matched_text": matched_text,  # 实际匹配的文本
+                            "message_content": content,  # 原始消息内容
+                            "conversation_context": message_display,  # 完整消息显示格式
+                            "highlighted_context": highlighted_display,    # 高亮后的消息显示
+                            "config_id": config_id,  # 配置ID
+                            "message_index": i,      # 消息在列表中的索引
+                            "message_id": message.get("id"),  # 消息ID
+                            "user_type": user_type,  # 用户类型
+                            "user_name": name,       # 用户姓名
+                            "create_time": create_time, # 消息创建时间
+                            "match_start_pos": match.start(),  # 匹配开始位置（在消息内容中）
+                            "match_end_pos": match.end(),      # 匹配结束位置（在消息内容中）
+                            "evidence_timestamp": datetime.now().isoformat()  # 证据提取时间戳
+                        }
+                        
+                        evidence_list.append(evidence_entry)
+                        
             except re.error as e:
                 logger.warning(f"正则表达式 {pattern} 执行失败: {e}")
                 continue
@@ -1183,10 +1275,27 @@ class Stage2AnalysisService:
                 evidence_preview = []
                 
                 for i, evidence in enumerate(detailed_evidence[:2]):  # 最多显示2条证据
+                    # 处理新的结构化证据格式
+                    if isinstance(evidence, dict):
+                        # 构建证据摘要：规则类型 + 匹配内容
+                        rule_type = evidence.get("rule_type", "未知")
+                        matched_text = evidence.get("matched_text", "")
+                        category = evidence.get("category", "")
+                        
+                        if rule_type == "keyword":
+                            evidence_summary = f"[{category}-关键词] {matched_text}"
+                        elif rule_type == "pattern":
+                            evidence_summary = f"[{category}-正则] {matched_text}"
+                        else:
+                            evidence_summary = f"[{category}] {matched_text}"
+                    else:
+                        # 兼容旧格式（字符串）
+                        evidence_summary = str(evidence)
+                    
                     evidence_length = min(50, available_space // 2)  # 每条证据最多50字符
-                    if len(evidence) > evidence_length:
-                        evidence = evidence[:evidence_length] + "..."
-                    evidence_preview.append(f"{i+1}. {evidence}")
+                    if len(evidence_summary) > evidence_length:
+                        evidence_summary = evidence_summary[:evidence_length] + "..."
+                    evidence_preview.append(f"{i+1}. {evidence_summary}")
                     available_space -= len(evidence_preview[-1]) + 3  # 3个字符用于分隔符
                     
                     if available_space < 20:  # 空间不足时停止
@@ -1386,15 +1495,16 @@ class Stage2AnalysisService:
         
         try:
             conversation_text = str(conversation_data.get("conversation_text") or "")
+            messages = conversation_data.get("messages", [])
             
-            if not conversation_text.strip():
-                logger.warning(f"⚠️ 工单 {work_id} 对话内容为空")
+            if not conversation_text.strip() or not messages:
+                logger.warning(f"⚠️ 工单 {work_id} 对话内容或消息列表为空")
                 return {
                     "success": False,
-                    "error": "对话内容为空"
+                    "error": "对话内容或消息列表为空"
                 }
             
-            logger.debug(f"📝 工单 {work_id} 对话文本长度: {len(conversation_text)} 字符")
+            logger.debug(f"📝 工单 {work_id} 对话文本长度: {len(conversation_text)} 字符，消息数量: {len(messages)} 条")
             
             # 1. 关键词粗筛
             logger.debug(f"🔍 工单 {work_id} 开始关键词粗筛...")
@@ -1420,14 +1530,14 @@ class Stage2AnalysisService:
                         if details.get("keywords"):
                             matched_keywords.extend(details["keywords"])
                             for keyword in details["keywords"]:
-                                # 在对话文本中找到包含该关键词的句子
-                                sentences = self._extract_evidence_sentences(conversation_text, keyword, category)
+                                # 在消息列表中找到包含该关键词的消息
+                                sentences = self._extract_evidence_sentences(messages, keyword, category)
                                 evidence_sentences.extend(sentences)
                                 detailed_evidence.extend(sentences)
                         
                         # 🔥 新增：收集正则模式匹配的具体内容
                         if details.get("patterns"):
-                            pattern_matches = self._extract_pattern_evidence(conversation_text, details["patterns"], category)
+                            pattern_matches = self._extract_pattern_evidence(messages, details["patterns"], category)
                             evidence_sentences.extend(pattern_matches)
                             detailed_evidence.extend(pattern_matches)
                 
