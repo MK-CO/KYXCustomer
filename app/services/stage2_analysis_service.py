@@ -604,7 +604,7 @@ class Stage2AnalysisService:
             "analysis_details": 4000,       # JSON字段
             "evidence_sentences": 3000,     # JSON字段
             "improvement_suggestions": 2000, # JSON字段
-            "evasion_types": 1000,          # JSON字段
+            "evasion_types": 200,           # 字符串字段
             "matched_keywords": 2000,       # JSON字段
             "analysis_note": 1500,          # 已在_build_enhanced_analysis_note中处理
             "matched_categories": 500       # VARCHAR字段
@@ -676,7 +676,7 @@ class Stage2AnalysisService:
             "risk_level": analysis_result.get("risk_level", "low"),
             "confidence_score": analysis_result.get("confidence_score", 0.0),
             # JSON字段 - 应用长度限制
-            "evasion_types": self._safe_truncate_json(analysis_result.get("evasion_types", []), FIELD_LIMITS["evasion_types"]),
+            "evasion_types": self._safe_truncate_string(analysis_result.get("evasion_types", ""), FIELD_LIMITS["evasion_types"]),
             "evidence_sentences": self._safe_truncate_json(analysis_result.get("evidence_sentences", []), FIELD_LIMITS["evidence_sentences"]),
             "improvement_suggestions": self._safe_truncate_json(analysis_result.get("improvement_suggestions", []), FIELD_LIMITS["improvement_suggestions"]),
             # 关键词筛选结果
@@ -1018,7 +1018,7 @@ class Stage2AnalysisService:
                         "has_evasion": False,
                         "risk_level": "medium",
                         "confidence_score": 0.75,
-                        "evasion_types": ["紧急催促"],
+                        "evasion_types": "紧急催促",
                         "evidence_sentences": ["车主一直催贴膜进度，又来了，怎么样了", "这个需要时间处理，让车主耐心等待"],
                         "improvement_suggestions": ["应具体回应车主的催促，提供明确的完成时间，如'师傅今天下午3点完成贴膜'"]
                     }
@@ -1029,7 +1029,7 @@ class Stage2AnalysisService:
                         "has_evasion": False,
                         "risk_level": "medium",
                         "confidence_score": 0.75,
-                        "evasion_types": ["紧急催促"],
+                        "evasion_types": "紧急催促",
                         "evidence_sentences": ["车主加急联系，速度催结果，有进展了吗", "已经在跟进了，会尽快给答复"],
                         "improvement_suggestions": ["面对加急催促，应提供具体的进展情况和预计完成时间"]
                     }
@@ -1042,7 +1042,7 @@ class Stage2AnalysisService:
                         "has_evasion": True,
                         "risk_level": "high",
                         "confidence_score": 0.95,
-                        "evasion_types": ["投诉纠纷", "推卸责任"],
+                        "evasion_types": "投诉纠纷",
                         "evidence_sentences": ["车主投诉配件质量，要退款了", "这不是我们的问题，是厂家的配件质量问题"],
                         "improvement_suggestions": ["面对投诉和退款要求，门店应承担售后责任，协助处理而不是推卸给厂家"]
                     }
@@ -1053,22 +1053,66 @@ class Stage2AnalysisService:
                         "has_evasion": False,
                         "risk_level": "high",
                         "confidence_score": 0.98,
-                        "evasion_types": ["投诉纠纷", "拖延处理"],
+                        "evasion_types": "投诉纠纷",
                         "evidence_sentences": ["有纠纷单，客诉12315了", "翘单吧，能拖就拖一天是一天"],
                         "improvement_suggestions": ["严禁故意拖延处理客诉和12315投诉，应立即响应和解决"]
                     }
                 }
             ],
-            "responsibility_evasion": [  # 推卸责任
+            "responsibility_evasion": [  # 推卸责任（增加更多示例）
                 {
                     "conversation": "门店: 车主说贴膜有气泡要求重新处理\n客服: 这不是我们门店的问题，是师傅技术问题，你直接找安装师傅负责。",
                     "analysis": {
                         "has_evasion": True,
                         "risk_level": "high", 
                         "confidence_score": 0.95,
-                        "evasion_types": ["推卸责任"],
+                        "evasion_types": "推卸责任",
                         "evidence_sentences": ["这不是我们门店的问题，是师傅技术问题", "你直接找安装师傅负责"],
                         "improvement_suggestions": ["门店应承担服务责任，协调师傅重新处理，而不是直接推卸给师傅"]
+                    }
+                },
+                {
+                    "conversation": "车主: 我的订单到现在都没有发货，什么时候能处理？\n客服: 这个需要仓库那边处理，我们客服管不了发货的事情，仓库的事情不归我管，你自己想办法联系吧。",
+                    "analysis": {
+                        "has_evasion": True,
+                        "risk_level": "high",
+                        "confidence_score": 0.88,
+                        "evasion_types": "推卸责任",
+                        "evidence_sentences": ["这个需要仓库那边处理，我们客服管不了发货的事情", "仓库的事情不归我管，你自己想办法联系吧"],
+                        "improvement_suggestions": ["主动协调各部门解决客户问题", "提供具体的解决方案和时间节点"]
+                    }
+                },
+                {
+                    "conversation": "车主: 产品质量有问题，我要退换货\n客服: 这个是产品部门的问题，我们售后处理不了，我们只负责接电话，具体处理不是我们的职责范围。",
+                    "analysis": {
+                        "has_evasion": True,
+                        "risk_level": "high", 
+                        "confidence_score": 0.90,
+                        "evasion_types": "推卸责任",
+                        "evidence_sentences": ["这个是产品部门的问题，我们售后处理不了", "我们只负责接电话，具体处理不是我们的职责范围"],
+                        "improvement_suggestions": ["主动承担责任协调解决", "为客户提供明确的处理流程"]
+                    }
+                },
+                {
+                    "conversation": "车主: 你们网站登录不了，一直报错\n客服: 网站问题我们解决不了，这是IT部门负责的，我们只管接咨询，技术问题不归我们处理。",
+                    "analysis": {
+                        "has_evasion": True,
+                        "risk_level": "high",
+                        "confidence_score": 0.85,
+                        "evasion_types": "推卸责任",
+                        "evidence_sentences": ["网站问题我们解决不了，这是IT部门负责的", "我们只管接咨询，技术问题不归我们处理"],
+                        "improvement_suggestions": ["主动协助客户解决技术问题", "建立跨部门协作机制"]
+                    }
+                },
+                {
+                    "conversation": "车主: 我付款了但是没收到确认短信\n客服: 短信是技术部门发的，我们管不了这个，你去联系技术部门吧，或者等系统自己恢复。",
+                    "analysis": {
+                        "has_evasion": True,
+                        "risk_level": "medium",
+                        "confidence_score": 0.78,
+                        "evasion_types": "推卸责任", 
+                        "evidence_sentences": ["短信是技术部门发的，我们管不了这个", "你去联系技术部门吧，或者等系统自己恢复"],
+                        "improvement_suggestions": ["主动帮助客户联系相关部门", "提供替代解决方案"]
                     }
                 }
             ],
@@ -1079,7 +1123,7 @@ class Stage2AnalysisService:
                         "has_evasion": False,
                         "risk_level": "medium",
                         "confidence_score": 0.7,
-                        "evasion_types": ["拖延处理"],
+                        "evasion_types": "拖延处理",
                         "evidence_sentences": ["具体时间不好说，你再等等看吧"],
                         "improvement_suggestions": ["应提供具体的处理时间节点，避免模糊回应"]
                     }
@@ -1092,7 +1136,7 @@ class Stage2AnalysisService:
                         "has_evasion": False,
                         "risk_level": "medium",
                         "confidence_score": 0.8,
-                        "evasion_types": ["不当用词"],
+                        "evasion_types": "不当用词",
                         "evidence_sentences": ["又来催了，撕心裂肺的，搞快点弄完", "赶紧搞定"],
                         "improvement_suggestions": ["应使用专业用语，如'车主比较着急，请加快处理速度'，避免'撕'、'搞'等不当表达"]
                     }
@@ -1105,7 +1149,7 @@ class Stage2AnalysisService:
                         "has_evasion": False,
                         "risk_level": "low",
                         "confidence_score": 0.1,
-                        "evasion_types": [],
+                        "evasion_types": "",
                         "evidence_sentences": [],
                         "improvement_suggestions": []
                     }
@@ -1385,7 +1429,7 @@ class Stage2AnalysisService:
             "has_evasion": llm_analysis.get("has_evasion", False),
             "risk_level": llm_analysis.get("risk_level", "low"),
             "confidence_score": llm_analysis.get("confidence_score", 0.0),
-            "evasion_types": llm_analysis.get("evasion_types", []),
+            "evasion_types": llm_analysis.get("evasion_types", ""),
             "improvement_suggestions": llm_analysis.get("improvement_suggestions", []),
             "sentiment": llm_analysis.get("sentiment", "neutral"),
             "sentiment_intensity": llm_analysis.get("sentiment_intensity", 0.0),
@@ -1423,8 +1467,8 @@ class Stage2AnalysisService:
             logger.debug("LLM未识别规避责任，但正则匹配到推卸责任，进行二次确认")
             if merged_result["confidence_score"] > 0.7:  # 高置信度时认为可能存在推卸责任
                 merged_result["has_evasion"] = True
-                if "推卸责任" not in merged_result["evasion_types"]:
-                    merged_result["evasion_types"].append("推卸责任")
+                if merged_result["evasion_types"] != "推卸责任":
+                    merged_result["evasion_types"] = "推卸责任"
         
         return merged_result
     
@@ -1478,7 +1522,7 @@ class Stage2AnalysisService:
                 llm_analysis_info.update({
                     "llm_confirmed": True,
                     "llm_risk_assessment": llm_analysis.get("risk_level", "unknown"),
-                    "llm_analysis_reason": f"LLM识别此内容属于{', '.join(llm_analysis.get('evasion_types', []))}行为",
+                    "llm_analysis_reason": f"LLM识别此内容属于{llm_analysis.get('evasion_types', '')}行为",
                     "llm_match_score": round(best_match_score, 3),
                     "llm_evidence_match": best_match_sentence,
                     "llm_suggestion": self._extract_relevant_suggestion(
@@ -1489,7 +1533,7 @@ class Stage2AnalysisService:
             else:
                 # 未匹配到LLM证据，但可能是相关类别
                 category = evidence.get("category", "")
-                if category in llm_analysis.get("evasion_types", []):
+                if category == llm_analysis.get("evasion_types", ""):
                     llm_analysis_info.update({
                         "llm_confirmed": True,
                         "llm_risk_assessment": llm_analysis.get("risk_level", "unknown"),
@@ -1604,14 +1648,19 @@ class Stage2AnalysisService:
         # 基本分析信息（必要信息，优先级最高）
         risk_level = analysis_result.get("risk_level", "unknown")
         confidence = analysis_result.get("confidence_score", 0.0)
-        categories = analysis_result.get("evasion_types", [])
+        evasion_type = analysis_result.get("evasion_types", "")
         
         notes.append(f"风险级别: {risk_level}, 置信度: {confidence:.3f}")
         
-        if categories:
-            categories_str = ', '.join(categories[:5])  # 最多显示5个类别
-            if len(categories) > 5:
-                categories_str += f" 等{len(categories)}个类别"
+        if evasion_type:
+            notes.append(f"问题类型: {evasion_type}")
+        
+        # 显示匹配的关键词类别信息
+        matched_categories = analysis_result.get("matched_categories", [])
+        if matched_categories and isinstance(matched_categories, list):
+            categories_str = ', '.join(matched_categories[:5])  # 最多显示5个类别
+            if len(matched_categories) > 5:
+                categories_str += f" 等{len(matched_categories)}个类别"
             notes.append(f"匹配类别: {categories_str}")
         
         # 检查当前长度
@@ -1831,7 +1880,7 @@ class Stage2AnalysisService:
     "has_evasion": boolean,
     "risk_level": "low|medium|high",
     "confidence_score": float,
-    "evasion_types": [string],
+    "evasion_types": string,
     "evidence_sentences": [string],
     "improvement_suggestions": [string],
     "sentiment": "positive|negative|neutral",
@@ -1989,7 +2038,7 @@ class Stage2AnalysisService:
                         "has_evasion": has_evasion_behavior,
                         "risk_level": final_risk_level,
                         "confidence_score": min(keyword_result["confidence_score"], 1.0),
-                        "evasion_types": keyword_result["matched_categories"],
+                        "evasion_types": keyword_result["matched_categories"][0] if keyword_result["matched_categories"] else "",
                         "evidence_sentences": evidence_sentences,
                         "detailed_evidence": detailed_evidence,
                         "improvement_suggestions": [f"检测到 {', '.join(keyword_result['matched_categories'])} 相关行为，建议加强服务质量管控和人员培训"],
@@ -2022,7 +2071,7 @@ class Stage2AnalysisService:
                     "has_evasion": False,
                     "risk_level": "low",
                     "confidence_score": keyword_result["confidence_score"],
-                    "evasion_types": [],
+                    "evasion_types": "",
                     "evidence_sentences": [],
                     "improvement_suggestions": [],
                     "sentiment": "neutral",
