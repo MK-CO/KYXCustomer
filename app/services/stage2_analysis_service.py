@@ -676,7 +676,7 @@ class Stage2AnalysisService:
             "risk_level": analysis_result.get("risk_level", "low"),
             "confidence_score": analysis_result.get("confidence_score", 0.0),
             # JSON字段 - 应用长度限制
-            "evasion_types": self._safe_truncate_string(analysis_result.get("evasion_types", ""), FIELD_LIMITS["evasion_types"]),
+            "evasion_types": self._safe_truncate_text(analysis_result.get("evasion_types", ""), FIELD_LIMITS["evasion_types"]),
             "evidence_sentences": self._safe_truncate_json(analysis_result.get("evidence_sentences", []), FIELD_LIMITS["evidence_sentences"]),
             "improvement_suggestions": self._safe_truncate_json(analysis_result.get("improvement_suggestions", []), FIELD_LIMITS["improvement_suggestions"]),
             # 关键词筛选结果
