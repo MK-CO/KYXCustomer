@@ -1113,53 +1113,59 @@ class Stage2AnalysisService:
             ]
         }
     
-    def _get_enabled_few_shot_examples(self, db: Session) -> List[Dict[str, Any]]:
-        """根据数据库配置获取启用分类的few-shot示例"""
+    def _get_category_few_shot_examples(self, db: Session, target_categories: List[str]) -> List[Dict[str, Any]]:
+        """根据目标分类获取对应的few-shot示例"""
         try:
-            # 查询启用的分析分类
-            sql = """
+            if not target_categories:
+                logger.warning("未提供目标分类，返回空示例")
+                return []
+            
+            # 查询启用的分析分类（过滤出目标分类中启用的）
+            category_keys_str = "', '".join(target_categories)
+            sql = f"""
             SELECT category_key, category_name 
             FROM ai_keyword_categories 
             WHERE category_type = 'analysis' 
             AND is_enabled = 1 
+            AND category_key IN ('{category_keys_str}')
             ORDER BY sort_order
             """
             
             enabled_categories = db.execute(text(sql)).fetchall()
             
             if not enabled_categories:
-                logger.warning("未找到启用的分析分类，使用默认示例")
+                logger.warning(f"目标分类 {target_categories} 中没有启用的分类")
                 return []
             
-            # 根据启用的分类收集few-shot示例
-            enabled_examples = []
+            # 收集对应分类的few-shot示例
+            category_examples = []
             enabled_category_keys = [cat.category_key for cat in enabled_categories]
             
-            logger.info(f"启用的分类: {enabled_category_keys}")
+            logger.info(f"为目标分类 {target_categories} 找到启用的分类: {enabled_category_keys}")
             
             for category_key in enabled_category_keys:
                 if category_key in self.few_shot_examples_by_category:
-                    category_examples = self.few_shot_examples_by_category[category_key]
-                    enabled_examples.extend(category_examples)
-                    logger.debug(f"分类 {category_key} 添加了 {len(category_examples)} 个示例")
+                    examples = self.few_shot_examples_by_category[category_key]
+                    category_examples.extend(examples)
+                    logger.debug(f"分类 {category_key} 添加了 {len(examples)} 个专门示例")
             
-            # 总是添加正常服务的对照组示例（如果存在）
+            # 总是添加正常服务的对照组示例
             if "normal_service" in self.few_shot_examples_by_category:
                 normal_examples = self.few_shot_examples_by_category["normal_service"]
-                enabled_examples.extend(normal_examples)
+                category_examples.extend(normal_examples)
                 logger.debug(f"添加了 {len(normal_examples)} 个正常服务对照示例")
             
-            logger.info(f"根据数据库配置生成了 {len(enabled_examples)} 个few-shot示例")
-            return enabled_examples
+            logger.info(f"为分类 {enabled_category_keys} 生成了 {len(category_examples)} 个专门few-shot示例")
+            return category_examples
             
         except Exception as e:
-            logger.error(f"获取启用few-shot示例失败: {e}")
-            # 降级：返回所有示例
-            all_examples = []
-            for examples in self.few_shot_examples_by_category.values():
-                all_examples.extend(examples)
-            logger.warning(f"降级使用所有示例，共 {len(all_examples)} 个")
-            return all_examples
+            logger.error(f"获取分类few-shot示例失败: {e}")
+            # 降级：返回正常服务示例
+            if "normal_service" in self.few_shot_examples_by_category:
+                fallback_examples = self.few_shot_examples_by_category["normal_service"]
+                logger.warning(f"降级使用正常服务示例，共 {len(fallback_examples)} 个")
+                return fallback_examples
+            return []
     
     def _extract_evidence_sentences(self, messages: List[Dict[str, Any]], keyword: str, category: str, config_id: int = None) -> List[Dict[str, Any]]:
         """从消息列表中提取包含关键词的具体消息，返回结构化JSON格式"""
@@ -1553,6 +1559,43 @@ class Stage2AnalysisService:
         # 如果没有找到特定建议，返回第一个通用建议
         return suggestions[0] if suggestions else ""
     
+    def _enhance_low_risk_evidence(
+        self, 
+        detailed_evidence: List[Dict[str, Any]], 
+        llm_analysis: Dict[str, Any],
+        keyword_result: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """增强低风险证据信息，记录LLM的低风险评估"""
+        
+        enhanced_evidence = []
+        
+        for evidence in detailed_evidence:
+            enhanced_evidence_item = evidence.copy()
+            
+            # 🔥 低风险情况的特殊LLM分析信息
+            low_risk_analysis = {
+                "llm_confirmed": False,  # LLM不确认此证据有问题
+                "llm_risk_assessment": "low",  # LLM评估为低风险
+                "llm_analysis_reason": llm_analysis.get("low_risk_reason", "LLM判定此内容为正常对话，不构成问题行为"),
+                "llm_match_score": 0.0,  # 匹配度设为0
+                "llm_evidence_match": None,  # 无匹配的LLM证据
+                "llm_suggestion": "此内容经LLM分析认为是正常业务对话，无需改进",
+                "regex_matched": True,  # 标记正则匹配成功
+                "llm_overridden": True,  # 标记LLM覆盖了正则判定
+                "confidence_explanation": f"正则匹配命中 '{evidence.get('category')}' 分类，但LLM分析认为是误报或正常情况"
+            }
+            
+            # 添加低风险分析信息
+            enhanced_evidence_item["llm_analysis"] = low_risk_analysis
+            enhanced_evidence_item["analysis_timestamp"] = datetime.now().isoformat()
+            
+            # 更新证据状态标记
+            enhanced_evidence_item["evidence_status"] = "regex_hit_llm_low_risk"  # 正则命中但LLM低风险
+            
+            enhanced_evidence.append(enhanced_evidence_item)
+        
+        return enhanced_evidence
+    
     def _build_enhanced_analysis_note(self, analysis_result: Dict[str, Any]) -> str:
         """构建增强的分析备注，包含详细证据信息，确保长度不超出数据库限制"""
         notes = []
@@ -1859,10 +1902,27 @@ class Stage2AnalysisService:
                 # 构建证据上下文
                 evidence_context = self._build_evidence_context(detailed_evidence, keyword_result)
                 
-                # 🔥 新增：根据数据库配置构建few-shot示例
-                few_shot_examples = self._get_enabled_few_shot_examples(db)
+                # 🔥 新增：根据当前匹配的分类获取专门的few-shot示例
+                matched_categories = keyword_result.get("matched_categories", [])
+                # 将中文分类名映射为category_key
+                category_key_mapping = {
+                    "紧急催促": "urgent_urging",
+                    "投诉纠纷": "complaint_dispute", 
+                    "推卸责任": "responsibility_evasion",
+                    "拖延处理": "delay_handling",
+                    "不当用词": "inappropriate_wording"
+                }
                 
-                # 调用LLM进行分析（传入动态few-shot示例）
+                target_category_keys = []
+                for category in matched_categories:
+                    if category in category_key_mapping:
+                        target_category_keys.append(category_key_mapping[category])
+                
+                logger.info(f"工单 {work_id} 匹配分类: {matched_categories} -> category_keys: {target_category_keys}")
+                
+                few_shot_examples = self._get_category_few_shot_examples(db, target_category_keys)
+                
+                # 调用LLM进行分析（传入针对性few-shot示例）
                 llm_result = await self.llm_provider.analyze_responsibility_evasion(
                     conversation_text, 
                     context=evidence_context,
@@ -1878,12 +1938,28 @@ class Stage2AnalysisService:
                         keyword_result, detailed_evidence, llm_analysis, conversation_data
                     )
                     
+                    # 🔥 新增：处理低风险但关键词命中的情况
+                    if final_result.get("risk_level", "low") == "low" and len(detailed_evidence) > 0:
+                        logger.info(f"⚠️ 工单 {work_id} 关键词命中但LLM判定为低风险，记录详细评估")
+                        
+                        # 增强证据信息，记录低风险原因
+                        enhanced_evidence = self._enhance_low_risk_evidence(
+                            detailed_evidence, llm_analysis, keyword_result
+                        )
+                        final_result["evidence_sentences"] = enhanced_evidence
+                        final_result["detailed_evidence"] = enhanced_evidence
+                        
+                        final_result["analysis_note"] = f"正则匹配发现 {len(detailed_evidence)} 条证据，但LLM评估为低风险。原因: {llm_analysis.get('low_risk_reason', 'LLM判定为正常对话')}"
+                    else:
+                        final_result["analysis_note"] = f"正则匹配发现 {len(detailed_evidence)} 条证据，LLM确认风险级别: {final_result['risk_level']}，置信度: {final_result['confidence_score']:.3f}"
+                    
                     # 添加分析元信息
                     final_result.update({
                         "llm_analysis": True,
                         "keyword_screening": keyword_result,
                         "llm_raw_response": llm_result.get("raw_response"),
-                        "analysis_note": f"正则匹配发现 {len(detailed_evidence)} 条证据，LLM确认风险级别: {final_result['risk_level']}，置信度: {final_result['confidence_score']:.3f}"
+                        "matched_categories": matched_categories,
+                        "few_shot_categories": target_category_keys
                     })
                     
                     logger.info(f"🎯 工单 {work_id} 最终分析结果: 风险级别={final_result['risk_level']}, 推卸责任={final_result.get('has_evasion', False)}, LLM置信度={final_result['confidence_score']:.3f}")
