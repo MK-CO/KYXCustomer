@@ -1491,13 +1491,16 @@ class Stage2AnalysisService:
             conversation_context = evidence.get("conversation_context", "")
             
             # 🔥 新增LLM分析相关字段
+            # 如果LLM成功分析了（有risk_level结果），则认为LLM确实进行了分析
+            llm_has_analysis = bool(llm_analysis.get("risk_level")) and llm_analysis.get("risk_level") != "unknown"
+            
             llm_analysis_info = {
-                "llm_confirmed": False,           # LLM是否确认此证据有问题
-                "llm_risk_assessment": "unknown", # LLM对此证据的风险评估
-                "llm_analysis_reason": "",        # LLM分析此证据的原因
+                "llm_confirmed": False,  # LLM是否确认此证据有问题（默认为False，只有匹配到才设为True）
+                "llm_risk_assessment": llm_analysis.get("risk_level", "low") if llm_has_analysis else "unknown",  # LLM对此证据的风险评估
+                "llm_analysis_reason": "LLM分析后认为此内容正常，未发现问题行为" if llm_has_analysis else "未进行LLM分析",  # LLM分析此证据的原因
                 "llm_match_score": 0.0,           # 与LLM证据的匹配度
                 "llm_evidence_match": None,       # 匹配到的LLM证据句子
-                "llm_suggestion": "",             # LLM针对此证据的建议
+                "llm_suggestion": "此内容经LLM分析认为是正常业务对话" if llm_has_analysis else "",  # LLM针对此证据的建议
             }
             
             # 尝试将此证据与LLM识别的证据句子进行匹配
@@ -1619,7 +1622,7 @@ class Stage2AnalysisService:
             # 🔥 低风险情况的特殊LLM分析信息
             low_risk_analysis = {
                 "llm_confirmed": False,  # LLM不确认此证据有问题
-                "llm_risk_assessment": "low",  # LLM评估为低风险
+                "llm_risk_assessment": llm_analysis.get("risk_level", "low"),  # LLM评估的实际风险级别
                 "llm_analysis_reason": llm_analysis.get("low_risk_reason", "LLM判定此内容为正常对话，不构成问题行为"),
                 "llm_match_score": 0.0,  # 匹配度设为0
                 "llm_evidence_match": None,  # 无匹配的LLM证据
