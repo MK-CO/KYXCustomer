@@ -1314,12 +1314,15 @@ class Stage2AnalysisService:
             "sentiment_intensity": llm_analysis.get("sentiment_intensity", 0.0),
         }
         
-        # 证据信息使用正则匹配的结构化结果
+        # 🔥 新增：将LLM分析结果关联到每条证据
+        enhanced_evidence = self._enhance_evidence_with_llm_analysis(detailed_evidence, llm_analysis)
+        
+        # 证据信息使用增强后的结构化结果
         merged_result.update({
-            "evidence_sentences": detailed_evidence,  # 使用结构化的证据
-            "detailed_evidence": detailed_evidence,   # 保持兼容性
-            "matched_keywords": [e.get("matched_keyword") for e in detailed_evidence if e.get("matched_keyword")],
-            "evidence_count": len(detailed_evidence),
+            "evidence_sentences": enhanced_evidence,  # 使用增强后的证据
+            "detailed_evidence": enhanced_evidence,   # 保持兼容性
+            "matched_keywords": [e.get("matched_keyword") for e in enhanced_evidence if e.get("matched_keyword")],
+            "evidence_count": len(enhanced_evidence),
         })
         
         # 会话信息
@@ -1347,6 +1350,137 @@ class Stage2AnalysisService:
                     merged_result["evasion_types"].append("推卸责任")
         
         return merged_result
+    
+    def _enhance_evidence_with_llm_analysis(
+        self, 
+        detailed_evidence: List[Dict[str, Any]], 
+        llm_analysis: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """将LLM分析结果关联到每条证据中"""
+        
+        enhanced_evidence = []
+        llm_evidence_sentences = llm_analysis.get("evidence_sentences", [])
+        
+        for evidence in detailed_evidence:
+            # 复制原始证据
+            enhanced_evidence_item = evidence.copy()
+            
+            # 获取证据的原始消息内容
+            message_content = evidence.get("message_content", "")
+            conversation_context = evidence.get("conversation_context", "")
+            
+            # 🔥 新增LLM分析相关字段
+            llm_analysis_info = {
+                "llm_confirmed": False,           # LLM是否确认此证据有问题
+                "llm_risk_assessment": "unknown", # LLM对此证据的风险评估
+                "llm_analysis_reason": "",        # LLM分析此证据的原因
+                "llm_match_score": 0.0,           # 与LLM证据的匹配度
+                "llm_evidence_match": None,       # 匹配到的LLM证据句子
+                "llm_suggestion": "",             # LLM针对此证据的建议
+            }
+            
+            # 尝试将此证据与LLM识别的证据句子进行匹配
+            best_match_score = 0.0
+            best_match_sentence = None
+            
+            for llm_sentence in llm_evidence_sentences:
+                if not llm_sentence or not isinstance(llm_sentence, str):
+                    continue
+                
+                # 计算匹配度
+                match_score = self._calculate_evidence_similarity(
+                    message_content, conversation_context, llm_sentence
+                )
+                
+                if match_score > best_match_score:
+                    best_match_score = match_score
+                    best_match_sentence = llm_sentence
+            
+            # 如果找到较好的匹配（匹配度 > 0.3）
+            if best_match_score > 0.3:
+                llm_analysis_info.update({
+                    "llm_confirmed": True,
+                    "llm_risk_assessment": llm_analysis.get("risk_level", "unknown"),
+                    "llm_analysis_reason": f"LLM识别此内容属于{', '.join(llm_analysis.get('evasion_types', []))}行为",
+                    "llm_match_score": round(best_match_score, 3),
+                    "llm_evidence_match": best_match_sentence,
+                    "llm_suggestion": self._extract_relevant_suggestion(
+                        llm_analysis.get("improvement_suggestions", []), 
+                        evidence.get("category", "")
+                    )
+                })
+            else:
+                # 未匹配到LLM证据，但可能是相关类别
+                category = evidence.get("category", "")
+                if category in llm_analysis.get("evasion_types", []):
+                    llm_analysis_info.update({
+                        "llm_confirmed": True,
+                        "llm_risk_assessment": llm_analysis.get("risk_level", "unknown"),
+                        "llm_analysis_reason": f"LLM确认存在{category}行为，虽未具体匹配到此证据",
+                        "llm_match_score": 0.2,  # 类别匹配给予较低分数
+                        "llm_suggestion": self._extract_relevant_suggestion(
+                            llm_analysis.get("improvement_suggestions", []), 
+                            category
+                        )
+                    })
+            
+            # 添加LLM分析信息到证据中
+            enhanced_evidence_item["llm_analysis"] = llm_analysis_info
+            enhanced_evidence_item["analysis_timestamp"] = datetime.now().isoformat()
+            
+            enhanced_evidence.append(enhanced_evidence_item)
+        
+        return enhanced_evidence
+    
+    def _calculate_evidence_similarity(self, message_content: str, conversation_context: str, llm_sentence: str) -> float:
+        """计算证据与LLM识别句子的相似度"""
+        if not message_content or not llm_sentence:
+            return 0.0
+        
+        # 清理文本
+        message_clean = message_content.strip().lower()
+        context_clean = conversation_context.strip().lower()
+        llm_clean = llm_sentence.strip().lower()
+        
+        # 1. 完全包含关系
+        if message_clean in llm_clean or llm_clean in message_clean:
+            return 1.0
+        
+        if context_clean in llm_clean or llm_clean in context_clean:
+            return 0.9
+        
+        # 2. 关键词重叠度计算
+        message_words = set(message_clean.split())
+        llm_words = set(llm_clean.split())
+        
+        if not message_words or not llm_words:
+            return 0.0
+        
+        intersection = message_words.intersection(llm_words)
+        union = message_words.union(llm_words)
+        
+        jaccard_score = len(intersection) / len(union) if union else 0.0
+        
+        # 3. 长度相似度调整
+        length_ratio = min(len(message_clean), len(llm_clean)) / max(len(message_clean), len(llm_clean))
+        
+        # 综合评分
+        final_score = jaccard_score * 0.7 + length_ratio * 0.3
+        
+        return min(final_score, 1.0)
+    
+    def _extract_relevant_suggestion(self, suggestions: List[str], category: str) -> str:
+        """从LLM建议中提取与特定类别相关的建议"""
+        if not suggestions or not category:
+            return ""
+        
+        # 查找包含该类别关键词的建议
+        for suggestion in suggestions:
+            if category in suggestion:
+                return suggestion
+        
+        # 如果没有找到特定建议，返回第一个通用建议
+        return suggestions[0] if suggestions else ""
     
     def _build_enhanced_analysis_note(self, analysis_result: Dict[str, Any]) -> str:
         """构建增强的分析备注，包含详细证据信息，确保长度不超出数据库限制"""
