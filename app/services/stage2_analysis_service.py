@@ -31,7 +31,7 @@ class Stage2AnalysisService:
         self.results_table_name = "ai_work_comment_analysis_results"
         self.llm_provider = get_llm_provider()
         self.keywords_config = {}  # 改为从数据库动态加载
-        self.few_shot_examples = self._init_few_shot_examples()
+        self.few_shot_examples_by_category = self._init_category_few_shot_examples()  # 按分类组织的few-shot示例
     
     # ==================== 待处理工单获取方法 ====================
     
@@ -1008,87 +1008,158 @@ class Stage2AnalysisService:
             }
         }
     
-    def _init_few_shot_examples(self) -> List[Dict[str, Any]]:
-        """初始化少样本示例"""
-        return [
-            {
-                "conversation": "门店: 车主一直催贴膜进度，又来了，怎么样了？\n客服: 这个需要时间处理，让车主耐心等待。",
-                "analysis": {
-                    "has_evasion": False,  # 🔥 修复：只是模糊回应，不是推卸责任
-                    "risk_level": "medium",
-                    "confidence_score": 0.75,
-                    "evasion_types": ["紧急催促", "模糊回应"],
-                    "evidence_sentences": ["车主一直催贴膜进度，又来了，怎么样了", "这个需要时间处理，让车主耐心等待"],
-                    "improvement_suggestions": ["应具体回应车主的催促，提供明确的完成时间，如'师傅今天下午3点完成贴膜'"]
+    def _init_category_few_shot_examples(self) -> Dict[str, List[Dict[str, Any]]]:
+        """初始化按分类组织的few-shot示例"""
+        return {
+            "urgent_urging": [  # 紧急催促
+                {
+                    "conversation": "门店: 车主一直催贴膜进度，又来了，怎么样了？\n客服: 这个需要时间处理，让车主耐心等待。",
+                    "analysis": {
+                        "has_evasion": False,
+                        "risk_level": "medium",
+                        "confidence_score": 0.75,
+                        "evasion_types": ["紧急催促"],
+                        "evidence_sentences": ["车主一直催贴膜进度，又来了，怎么样了", "这个需要时间处理，让车主耐心等待"],
+                        "improvement_suggestions": ["应具体回应车主的催促，提供明确的完成时间，如'师傅今天下午3点完成贴膜'"]
+                    }
+                },
+                {
+                    "conversation": "门店: 车主加急联系，速度催结果，有进展了吗？\n客服: 已经在跟进了，会尽快给答复。",
+                    "analysis": {
+                        "has_evasion": False,
+                        "risk_level": "medium",
+                        "confidence_score": 0.75,
+                        "evasion_types": ["紧急催促"],
+                        "evidence_sentences": ["车主加急联系，速度催结果，有进展了吗", "已经在跟进了，会尽快给答复"],
+                        "improvement_suggestions": ["面对加急催促，应提供具体的进展情况和预计完成时间"]
+                    }
                 }
-            },
-            {
-                "conversation": "门店: 车主投诉配件质量，要退款了\n客服: 这不是我们的问题，是厂家的配件质量问题，让车主直接找供应商。",
-                "analysis": {
-                    "has_evasion": True,
-                    "risk_level": "high",
-                    "confidence_score": 0.95,
-                    "evasion_types": ["投诉纠纷", "推卸责任"],
-                    "evidence_sentences": ["车主投诉配件质量，要退款了", "这不是我们的问题，是厂家的配件质量问题"],
-                    "improvement_suggestions": ["面对投诉和退款要求，门店应承担售后责任，协助处理而不是推卸给厂家"]
+            ],
+            "complaint_dispute": [  # 投诉纠纷
+                {
+                    "conversation": "门店: 车主投诉配件质量，要退款了\n客服: 这不是我们的问题，是厂家的配件质量问题，让车主直接找供应商。",
+                    "analysis": {
+                        "has_evasion": True,
+                        "risk_level": "high",
+                        "confidence_score": 0.95,
+                        "evasion_types": ["投诉纠纷", "推卸责任"],
+                        "evidence_sentences": ["车主投诉配件质量，要退款了", "这不是我们的问题，是厂家的配件质量问题"],
+                        "improvement_suggestions": ["面对投诉和退款要求，门店应承担售后责任，协助处理而不是推卸给厂家"]
+                    }
+                },
+                {
+                    "conversation": "门店: 有纠纷单，客诉12315了\n客服: 翘单吧，能拖就拖一天是一天。",
+                    "analysis": {
+                        "has_evasion": False,
+                        "risk_level": "high",
+                        "confidence_score": 0.98,
+                        "evasion_types": ["投诉纠纷", "拖延处理"],
+                        "evidence_sentences": ["有纠纷单，客诉12315了", "翘单吧，能拖就拖一天是一天"],
+                        "improvement_suggestions": ["严禁故意拖延处理客诉和12315投诉，应立即响应和解决"]
+                    }
                 }
-            },
-            {
-                "conversation": "师傅: 又来催了，撕心裂肺的，搞快点弄完\n门店: 知道了，赶紧搞定",
-                "analysis": {
-                    "has_evasion": False,  # 🔥 修复：只是不当用词，不是推卸责任
-                    "risk_level": "medium",
-                    "confidence_score": 0.8,
-                    "evasion_types": ["不当用词表达"],
-                    "evidence_sentences": ["又来催了，撕心裂肺的，搞快点弄完", "赶紧搞定"],
-                    "improvement_suggestions": ["应使用专业用语，如'车主比较着急，请加快处理速度'，避免'撕'、'搞'等不当表达"]
+            ],
+            "responsibility_evasion": [  # 推卸责任
+                {
+                    "conversation": "门店: 车主说贴膜有气泡要求重新处理\n客服: 这不是我们门店的问题，是师傅技术问题，你直接找安装师傅负责。",
+                    "analysis": {
+                        "has_evasion": True,
+                        "risk_level": "high", 
+                        "confidence_score": 0.95,
+                        "evasion_types": ["推卸责任"],
+                        "evidence_sentences": ["这不是我们门店的问题，是师傅技术问题", "你直接找安装师傅负责"],
+                        "improvement_suggestions": ["门店应承担服务责任，协调师傅重新处理，而不是直接推卸给师傅"]
+                    }
                 }
-            },
-            {
-                "conversation": "门店: 有纠纷单，客诉12315了\n客服: 翘单吧，能拖就拖一天是一天。",
-                "analysis": {
-                    "has_evasion": False,  # 🔥 修复：虽然是严重问题，但分类不包含推卸责任
-                    "risk_level": "high",
-                    "confidence_score": 0.98,
-                    "evasion_types": ["投诉纠纷", "拖延处理"],
-                    "evidence_sentences": ["有纠纷单，客诉12315了", "翘单吧，能拖就拖一天是一天"],
-                    "improvement_suggestions": ["严禁故意拖延处理客诉和12315投诉，应立即响应和解决"]
+            ],
+            "delay_handling": [  # 拖延处理
+                {
+                    "conversation": "客户: 订单什么时候能处理完？\n客服: 这个...具体时间不好说，你再等等看吧。",
+                    "analysis": {
+                        "has_evasion": False,
+                        "risk_level": "medium",
+                        "confidence_score": 0.7,
+                        "evasion_types": ["拖延处理"],
+                        "evidence_sentences": ["具体时间不好说，你再等等看吧"],
+                        "improvement_suggestions": ["应提供具体的处理时间节点，避免模糊回应"]
+                    }
                 }
-            },
-            {
-                "conversation": "门店: 车主加急联系，速度催结果，有进展了吗？\n客服: 已经在跟进了，会尽快给答复。",
-                "analysis": {
-                    "has_evasion": False,  # 🔥 修复：只是模糊回应，不是推卸责任
-                    "risk_level": "medium",
-                    "confidence_score": 0.75,
-                    "evasion_types": ["紧急催促", "模糊回应"],
-                    "evidence_sentences": ["车主加急联系，速度催结果，有进展了吗", "已经在跟进了，会尽快给答复"],
-                    "improvement_suggestions": ["面对加急催促，应提供具体的进展情况和预计完成时间"]
+            ],
+            "inappropriate_wording": [  # 不当用词
+                {
+                    "conversation": "师傅: 又来催了，撕心裂肺的，搞快点弄完\n门店: 知道了，赶紧搞定",
+                    "analysis": {
+                        "has_evasion": False,
+                        "risk_level": "medium",
+                        "confidence_score": 0.8,
+                        "evasion_types": ["不当用词"],
+                        "evidence_sentences": ["又来催了，撕心裂肺的，搞快点弄完", "赶紧搞定"],
+                        "improvement_suggestions": ["应使用专业用语，如'车主比较着急，请加快处理速度'，避免'撕'、'搞'等不当表达"]
+                    }
                 }
-            },
-            {
-                "conversation": "门店: 车主咨询全车贴膜价格和质保期\n客服: 全车贴膜1800元，质保2年，包括材料和人工，预计明天上午完成安装。",
-                "analysis": {
-                    "has_evasion": False,
-                    "risk_level": "low",
-                    "confidence_score": 0.1,
-                    "evasion_types": [],
-                    "evidence_sentences": [],
-                    "improvement_suggestions": []
+            ],
+            "normal_service": [  # 正常服务（对照组）
+                {
+                    "conversation": "门店: 车主咨询全车贴膜价格和质保期\n客服: 全车贴膜1800元，质保2年，包括材料和人工，预计明天上午完成安装。",
+                    "analysis": {
+                        "has_evasion": False,
+                        "risk_level": "low",
+                        "confidence_score": 0.1,
+                        "evasion_types": [],
+                        "evidence_sentences": [],
+                        "improvement_suggestions": []
+                    }
                 }
-            },
-            {
-                "conversation": "门店: 车主说贴膜有气泡要求重新处理\n客服: 这不是我们门店的问题，是师傅技术问题，你直接找安装师傅负责。",
-                "analysis": {
-                    "has_evasion": True,  # 🔥 正确示例：明显的推卸责任行为
-                    "risk_level": "high", 
-                    "confidence_score": 0.95,
-                    "evasion_types": ["推卸责任"],
-                    "evidence_sentences": ["这不是我们门店的问题，是师傅技术问题", "你直接找安装师傅负责"],
-                    "improvement_suggestions": ["门店应承担服务责任，协调师傅重新处理，而不是直接推卸给师傅"]
-                }
-            }
-        ]
+            ]
+        }
+    
+    def _get_enabled_few_shot_examples(self, db: Session) -> List[Dict[str, Any]]:
+        """根据数据库配置获取启用分类的few-shot示例"""
+        try:
+            # 查询启用的分析分类
+            sql = """
+            SELECT category_key, category_name 
+            FROM ai_keyword_categories 
+            WHERE category_type = 'analysis' 
+            AND is_enabled = 1 
+            ORDER BY sort_order
+            """
+            
+            enabled_categories = db.execute(text(sql)).fetchall()
+            
+            if not enabled_categories:
+                logger.warning("未找到启用的分析分类，使用默认示例")
+                return []
+            
+            # 根据启用的分类收集few-shot示例
+            enabled_examples = []
+            enabled_category_keys = [cat.category_key for cat in enabled_categories]
+            
+            logger.info(f"启用的分类: {enabled_category_keys}")
+            
+            for category_key in enabled_category_keys:
+                if category_key in self.few_shot_examples_by_category:
+                    category_examples = self.few_shot_examples_by_category[category_key]
+                    enabled_examples.extend(category_examples)
+                    logger.debug(f"分类 {category_key} 添加了 {len(category_examples)} 个示例")
+            
+            # 总是添加正常服务的对照组示例（如果存在）
+            if "normal_service" in self.few_shot_examples_by_category:
+                normal_examples = self.few_shot_examples_by_category["normal_service"]
+                enabled_examples.extend(normal_examples)
+                logger.debug(f"添加了 {len(normal_examples)} 个正常服务对照示例")
+            
+            logger.info(f"根据数据库配置生成了 {len(enabled_examples)} 个few-shot示例")
+            return enabled_examples
+            
+        except Exception as e:
+            logger.error(f"获取启用few-shot示例失败: {e}")
+            # 降级：返回所有示例
+            all_examples = []
+            for examples in self.few_shot_examples_by_category.values():
+                all_examples.extend(examples)
+            logger.warning(f"降级使用所有示例，共 {len(all_examples)} 个")
+            return all_examples
     
     def _extract_evidence_sentences(self, messages: List[Dict[str, Any]], keyword: str, category: str, config_id: int = None) -> List[Dict[str, Any]]:
         """从消息列表中提取包含关键词的具体消息，返回结构化JSON格式"""
@@ -1788,10 +1859,14 @@ class Stage2AnalysisService:
                 # 构建证据上下文
                 evidence_context = self._build_evidence_context(detailed_evidence, keyword_result)
                 
-                # 调用LLM进行分析
+                # 🔥 新增：根据数据库配置构建few-shot示例
+                few_shot_examples = self._get_enabled_few_shot_examples(db)
+                
+                # 调用LLM进行分析（传入动态few-shot示例）
                 llm_result = await self.llm_provider.analyze_responsibility_evasion(
                     conversation_text, 
-                    context=evidence_context
+                    context=evidence_context,
+                    few_shot_examples=few_shot_examples
                 )
                 
                 if llm_result["success"]:

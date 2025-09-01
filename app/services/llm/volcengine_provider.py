@@ -110,12 +110,17 @@ class VolcengineProvider(BaseLLMProvider):
     async def analyze_responsibility_evasion(
         self,
         conversation_text: str,
-        context: Optional[str] = None
+        context: Optional[str] = None,
+        few_shot_examples: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         使用火山大模型分析规避责任行为
         """
-        prompt = self._build_enhanced_responsibility_prompt(conversation_text, context or "")
+        prompt = self._build_enhanced_responsibility_prompt(
+            conversation_text, 
+            context or "", 
+            few_shot_examples or []
+        )
         
         messages = [
             {"role": "user", "content": prompt}
@@ -218,12 +223,19 @@ class VolcengineProvider(BaseLLMProvider):
                 "analysis": {}
             }
     
-    def _build_enhanced_responsibility_prompt(self, conversation_text: str, context: str = "") -> str:
+    def _build_enhanced_responsibility_prompt(
+        self, 
+        conversation_text: str, 
+        context: str = "", 
+        few_shot_examples: List[Dict[str, Any]] = None
+    ) -> str:
         """
         构建增强的规避责任检测提示词
         """
-        few_shot_examples = [
-            {
+        # 🔥 使用传入的动态few-shot示例，如果为空则使用默认示例
+        if not few_shot_examples:
+            few_shot_examples = [
+                {
                 "conversation": "门店: 车主一直催贴膜进度，又来了，怎么样了？\n客服: 这个需要时间处理，让车主耐心等待。",
                 "analysis": {
                     "has_evasion": True,
@@ -289,7 +301,7 @@ class VolcengineProvider(BaseLLMProvider):
                     "improvement_suggestions": []
                 }
             }
-        ]
+            ]
         
         few_shot_text = "\n\n".join([
             f"对话示例{i+1}:\n{example['conversation']}\n分析结果:\n{safe_json_dumps(example['analysis'], ensure_ascii=False)}"

@@ -133,12 +133,14 @@ class SiliconflowProvider(BaseLLMProvider):
     async def analyze_responsibility_evasion(
         self,
         conversation_text: str,
-        context: Optional[str] = None
+        context: Optional[str] = None,
+        few_shot_examples: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         使用SiliconFlow分析规避责任行为
         """
         prompt = self._build_responsibility_prompt(conversation_text, context or "")
+        # 注意：SiliconFlow提供商暂时使用基础提示词，可根据需要扩展few-shot功能
         
         messages = [
             {"role": "system", "content": "你是一个专业的客服对话分析师，擅长识别对话中的规避责任行为。请严格按照要求的JSON格式返回分析结果。"},

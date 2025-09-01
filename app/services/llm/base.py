@@ -47,7 +47,8 @@ class BaseLLMProvider(ABC):
     async def analyze_responsibility_evasion(
         self,
         conversation_text: str,
-        context: Optional[str] = None
+        context: Optional[str] = None,
+        few_shot_examples: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         分析对话中的规避责任行为
@@ -55,6 +56,7 @@ class BaseLLMProvider(ABC):
         Args:
             conversation_text: 对话文本
             context: 上下文信息
+            few_shot_examples: 动态few-shot示例列表
             
         Returns:
             分析结果
