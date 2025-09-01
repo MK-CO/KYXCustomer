@@ -1242,6 +1242,112 @@ class Stage2AnalysisService:
         
         return evidence_list
     
+    def _build_evidence_context(self, detailed_evidence: List[Dict[str, Any]], keyword_result: Dict[str, Any]) -> str:
+        """构建证据上下文，传递给LLM进行深度分析"""
+        if not detailed_evidence:
+            return ""
+        
+        context_parts = [
+            "=== 正则匹配发现的关键证据 ===",
+            f"总计发现 {len(detailed_evidence)} 条证据，涉及类别: {', '.join(keyword_result.get('matched_categories', []))}",
+            ""
+        ]
+        
+        # 按类别组织证据
+        evidence_by_category = {}
+        for evidence in detailed_evidence:
+            category = evidence.get("category", "未分类")
+            if category not in evidence_by_category:
+                evidence_by_category[category] = []
+            evidence_by_category[category].append(evidence)
+        
+        for category, evidences in evidence_by_category.items():
+            context_parts.append(f"📂 {category} ({len(evidences)}条):")
+            
+            for i, evidence in enumerate(evidences[:3], 1):  # 每个类别最多显示3条证据
+                rule_type = evidence.get("rule_type", "未知")
+                matched_text = evidence.get("matched_text", "")
+                highlighted_context = evidence.get("highlighted_context", "")
+                
+                if rule_type == "keyword":
+                    context_parts.append(f"  {i}. [关键词匹配] \"{matched_text}\"")
+                elif rule_type == "pattern":
+                    pattern = evidence.get("matched_pattern", "")
+                    context_parts.append(f"  {i}. [正则匹配] 模式: {pattern} -> \"{matched_text}\"")
+                
+                context_parts.append(f"     对话: {highlighted_context}")
+                context_parts.append("")
+            
+            if len(evidences) > 3:
+                context_parts.append(f"     ... 还有 {len(evidences) - 3} 条证据")
+                context_parts.append("")
+        
+        context_parts.extend([
+            "=== 分析要求 ===",
+            "请基于以上证据，结合完整对话内容，进行深度分析：",
+            "1. 确认这些证据是否真的表明存在问题行为",
+            "2. 评估问题的严重程度和风险级别",
+            "3. 判断是否存在规避责任行为",
+            "4. 给出具体的改进建议",
+            ""
+        ])
+        
+        return "\n".join(context_parts)
+    
+    def _merge_regex_and_llm_results(
+        self, 
+        keyword_result: Dict[str, Any], 
+        detailed_evidence: List[Dict[str, Any]], 
+        llm_analysis: Dict[str, Any],
+        conversation_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """融合正则匹配和LLM分析结果"""
+        
+        # 基础信息从LLM分析结果获取
+        merged_result = {
+            "has_evasion": llm_analysis.get("has_evasion", False),
+            "risk_level": llm_analysis.get("risk_level", "low"),
+            "confidence_score": llm_analysis.get("confidence_score", 0.0),
+            "evasion_types": llm_analysis.get("evasion_types", []),
+            "improvement_suggestions": llm_analysis.get("improvement_suggestions", []),
+            "sentiment": llm_analysis.get("sentiment", "neutral"),
+            "sentiment_intensity": llm_analysis.get("sentiment_intensity", 0.0),
+        }
+        
+        # 证据信息使用正则匹配的结构化结果
+        merged_result.update({
+            "evidence_sentences": detailed_evidence,  # 使用结构化的证据
+            "detailed_evidence": detailed_evidence,   # 保持兼容性
+            "matched_keywords": [e.get("matched_keyword") for e in detailed_evidence if e.get("matched_keyword")],
+            "evidence_count": len(detailed_evidence),
+        })
+        
+        # 会话信息
+        merged_result.update({
+            "session_start_time": conversation_data.get("session_info", {}).get("start_time"),
+            "session_end_time": conversation_data.get("session_info", {}).get("end_time"),
+            "total_comments": conversation_data.get("total_messages", 0),
+            "customer_comments": conversation_data.get("customer_messages", 0),
+            "service_comments": conversation_data.get("service_messages", 0),
+            "conversation_text": conversation_data.get("conversation_text", ""),
+            "conversation_messages": conversation_data.get("messages", []),
+        })
+        
+        # 如果LLM的置信度过低，调整为基于正则匹配的置信度
+        if merged_result["confidence_score"] < 0.5 and keyword_result.get("confidence_score", 0) > 0.5:
+            logger.debug("LLM置信度较低，使用正则匹配的置信度")
+            merged_result["confidence_score"] = min(keyword_result["confidence_score"], 0.8)
+        
+        # 如果LLM没有识别出规避责任，但正则匹配到了推卸责任类别，进行二次确认
+        if not merged_result["has_evasion"] and any("推卸责任" in cat for cat in keyword_result.get("matched_categories", [])):
+            logger.debug("LLM未识别规避责任，但正则匹配到推卸责任，进行二次确认")
+            if merged_result["confidence_score"] > 0.7:  # 高置信度时认为可能存在推卸责任
+                merged_result["has_evasion"] = True
+                if "推卸责任" not in merged_result["evasion_types"]:
+                    merged_result["evasion_types"].append("推卸责任")
+        
+        return merged_result
+    
     def _build_enhanced_analysis_note(self, analysis_result: Dict[str, Any]) -> str:
         """构建增强的分析备注，包含详细证据信息，确保长度不超出数据库限制"""
         notes = []
@@ -1511,12 +1617,12 @@ class Stage2AnalysisService:
             keyword_result = self.keyword_screening(conversation_text, db)
             logger.info(f"📊 工单 {work_id} 关键词筛选结果: 可疑={keyword_result['is_suspicious']}, 置信度={keyword_result['confidence_score']:.3f}")
             
-            # 2. 🔥 优化：关键词和正则命中的直接判定为中风险以上，LLM为辅助分析
+            # 2. 🔥 新流程：正则匹配 + LLM深度分析
             if keyword_result["is_suspicious"] and keyword_result["confidence_score"] >= 0.3:
                 logger.info(f"🎯 工单 {work_id} 命中关键词类别: {keyword_result['matched_categories']}，置信度: {keyword_result['confidence_score']:.3f}")
                 
-                # 🔥 新优化逻辑：关键词命中直接判定为中风险以上，不依赖LLM
-                # 🔥 优化：构建详细证据信息，包含具体聊天内容和上下文
+                # 🔥 第一步：收集正则匹配的证据
+                logger.debug(f"📋 工单 {work_id} 开始收集正则匹配证据...")
                 matched_risk_levels = []
                 evidence_sentences = []
                 matched_keywords = []
@@ -1526,69 +1632,103 @@ class Stage2AnalysisService:
                     if not details.get("excluded", False):
                         matched_risk_levels.append(details.get("risk_level", "medium"))
                         
-                        # 🔥 新增：收集匹配关键词的具体句子和上下文
+                        # 收集匹配关键词的具体句子和上下文
                         if details.get("keywords"):
                             matched_keywords.extend(details["keywords"])
                             for keyword in details["keywords"]:
-                                # 在消息列表中找到包含该关键词的消息
                                 sentences = self._extract_evidence_sentences(messages, keyword, category)
                                 evidence_sentences.extend(sentences)
                                 detailed_evidence.extend(sentences)
                         
-                        # 🔥 新增：收集正则模式匹配的具体内容
+                        # 收集正则模式匹配的具体内容
                         if details.get("patterns"):
                             pattern_matches = self._extract_pattern_evidence(messages, details["patterns"], category)
                             evidence_sentences.extend(pattern_matches)
                             detailed_evidence.extend(pattern_matches)
                 
-                # 确定最终风险级别（取最高风险级别）
-                if "high" in matched_risk_levels:
-                    final_risk_level = "high"
-                elif "medium" in matched_risk_levels:
-                    final_risk_level = "medium"
-                else:
-                    final_risk_level = "medium"  # 默认中风险
+                logger.info(f"📊 工单 {work_id} 正则匹配结果: 收集到 {len(detailed_evidence)} 条证据")
                 
-                # 🔥 修复逻辑：只有推卸责任分类命中时才算规避责任
-                has_evasion_behavior = any(
-                    "推卸责任" in category for category in keyword_result["matched_categories"]
+                # 🔥 第二步：调用LLM进行深度分析
+                logger.debug(f"🤖 工单 {work_id} 开始LLM深度分析...")
+                
+                # 构建证据上下文
+                evidence_context = self._build_evidence_context(detailed_evidence, keyword_result)
+                
+                # 调用LLM进行分析
+                llm_result = await self.llm_provider.analyze_responsibility_evasion(
+                    conversation_text, 
+                    context=evidence_context
                 )
                 
-                # 🎯 关键词命中直接构建分析结果，无需LLM分析
-                keyword_based_result = {
-                    "has_evasion": has_evasion_behavior,  # 🔥 修复：只有推卸责任分类命中才算规避责任
-                    "risk_level": final_risk_level,
-                    "confidence_score": min(keyword_result["confidence_score"], 1.0),
-                    "evasion_types": keyword_result["matched_categories"],
-                    "evidence_sentences": evidence_sentences,
-                    "detailed_evidence": detailed_evidence,  # 🔥 新增：详细证据信息
-                    "improvement_suggestions": [f"检测到 {', '.join(keyword_result['matched_categories'])} 相关行为，建议加强服务质量管控和人员培训" + 
-                                             (f"。特别关注推卸责任行为的改进" if has_evasion_behavior else "")],
-                    "sentiment": "negative",  # 关键词命中通常表示负面情况
-                    "sentiment_intensity": 0.7,
-                    "keyword_screening": keyword_result,
-                    "llm_analysis": False,  # 标记未使用LLM
-                    "analysis_note": f"基于关键词和正则匹配直接判定为{final_risk_level}风险，匹配类别: {', '.join(keyword_result['matched_categories'])}，详细证据: {len(detailed_evidence)}条" + 
-                                   (f"，存在推卸责任行为" if has_evasion_behavior else f"，未发现推卸责任行为"),
-                    # 🔥 优化：补充完整的会话信息和详细证据
-                    "session_start_time": conversation_data.get("session_info", {}).get("start_time"),
-                    "session_end_time": conversation_data.get("session_info", {}).get("end_time"),
-                    "total_comments": conversation_data.get("total_messages", 0),
-                    "customer_comments": conversation_data.get("customer_messages", 0),
-                    "service_comments": conversation_data.get("service_messages", 0),
-                    "conversation_text": conversation_text,
-                    "conversation_messages": conversation_data.get("messages", []),  # 🔥 新增：完整消息列表
-                    "matched_keywords": matched_keywords,  # 🔥 新增：匹配的关键词列表
-                    "evidence_count": len(detailed_evidence)  # 🔥 新增：证据条数
-                }
-                
-                logger.info(f"✅ 工单 {work_id} 基于关键词直接判定完成: 风险级别={final_risk_level}, 类别={keyword_result['matched_categories']}, 推卸责任={has_evasion_behavior}")
-                
-                return {
-                    "success": True,
-                    "work_id": work_id,
-                    "analysis_result": keyword_based_result
-                }
+                if llm_result["success"]:
+                    logger.info(f"✅ 工单 {work_id} LLM分析成功")
+                    llm_analysis = llm_result["analysis"]
+                    
+                    # 🔥 第三步：融合正则匹配和LLM分析结果
+                    final_result = self._merge_regex_and_llm_results(
+                        keyword_result, detailed_evidence, llm_analysis, conversation_data
+                    )
+                    
+                    # 添加分析元信息
+                    final_result.update({
+                        "llm_analysis": True,
+                        "keyword_screening": keyword_result,
+                        "llm_raw_response": llm_result.get("raw_response"),
+                        "analysis_note": f"正则匹配发现 {len(detailed_evidence)} 条证据，LLM确认风险级别: {final_result['risk_level']}，置信度: {final_result['confidence_score']:.3f}"
+                    })
+                    
+                    logger.info(f"🎯 工单 {work_id} 最终分析结果: 风险级别={final_result['risk_level']}, 推卸责任={final_result.get('has_evasion', False)}, LLM置信度={final_result['confidence_score']:.3f}")
+                    
+                    return {
+                        "success": True,
+                        "work_id": work_id,
+                        "analysis_result": final_result
+                    }
+                else:
+                    # LLM分析失败，降级到基于正则的判定
+                    logger.warning(f"⚠️ 工单 {work_id} LLM分析失败: {llm_result.get('error', '未知错误')}，降级到正则判定")
+                    
+                    # 确定风险级别（基于正则匹配）
+                    if "high" in matched_risk_levels:
+                        final_risk_level = "high"
+                    elif "medium" in matched_risk_levels:
+                        final_risk_level = "medium"
+                    else:
+                        final_risk_level = "medium"
+                    
+                    has_evasion_behavior = any(
+                        "推卸责任" in category for category in keyword_result["matched_categories"]
+                    )
+                    
+                    fallback_result = {
+                        "has_evasion": has_evasion_behavior,
+                        "risk_level": final_risk_level,
+                        "confidence_score": min(keyword_result["confidence_score"], 1.0),
+                        "evasion_types": keyword_result["matched_categories"],
+                        "evidence_sentences": evidence_sentences,
+                        "detailed_evidence": detailed_evidence,
+                        "improvement_suggestions": [f"检测到 {', '.join(keyword_result['matched_categories'])} 相关行为，建议加强服务质量管控和人员培训"],
+                        "sentiment": "negative",
+                        "sentiment_intensity": 0.7,
+                        "keyword_screening": keyword_result,
+                        "llm_analysis": False,
+                        "analysis_note": f"LLM分析失败，基于正则匹配判定为{final_risk_level}风险，匹配类别: {', '.join(keyword_result['matched_categories'])}",
+                        # 补充会话信息
+                        "session_start_time": conversation_data.get("session_info", {}).get("start_time"),
+                        "session_end_time": conversation_data.get("session_info", {}).get("end_time"),
+                        "total_comments": conversation_data.get("total_messages", 0),
+                        "customer_comments": conversation_data.get("customer_messages", 0),
+                        "service_comments": conversation_data.get("service_messages", 0),
+                        "conversation_text": conversation_text,
+                        "matched_keywords": matched_keywords,
+                        "evidence_count": len(detailed_evidence)
+                    }
+                    
+                    return {
+                        "success": True,
+                        "work_id": work_id,
+                        "analysis_result": fallback_result
+                    }
             else:
                 logger.info(f"⏭️ 工单 {work_id} 未命中关键词阈值（置信度: {keyword_result['confidence_score']:.3f}），判定为低风险，不保存")
                 
@@ -1621,9 +1761,9 @@ class Stage2AnalysisService:
                     "analysis_result": low_risk_result
                 }
             
-            # 🔥 注意：由于现在采用关键词优先的策略，LLM分析部分已被移除
-            # 所有分析决策都基于关键词和正则匹配结果
-            # 这里不应该被执行到，因为上面的逻辑已经处理了所有情况
+            # 🔥 注意：当前采用正则匹配 + LLM分析的策略
+            # 未命中正则匹配阈值的对话判定为低风险
+            # 上面的逻辑已经处理了所有情况
             
         except Exception as e:
             logger.error(f"❌ 工单 {work_id} 分析对话失败: {e}")
