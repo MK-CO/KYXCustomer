@@ -226,13 +226,13 @@ class Stage2AnalysisService:
             user_type = comment.get("user_type", "")
             oper = comment.get("oper", False)
             
-            # 统计消息数量
-            if user_type == "customer":
-                customer_count += 1
-            elif user_type == "service" or oper:
-                service_count += 1
-            elif user_type == "system":
+            # 统计消息数量 - 仅根据oper字段判断
+            if user_type == "system":
                 system_count += 1
+            elif oper:  # oper为1，客服回复
+                service_count += 1
+            else:  # oper为0，客户回复
+                customer_count += 1
             
             # 构建消息对象
             messages.append({
@@ -459,6 +459,49 @@ class Stage2AnalysisService:
         except Exception as e:
             logger.error(f"❌ 查询工单 {work_id} 的订单信息失败，表: {work_order_table}, 错误: {e}")
             return None, None
+    
+    def _get_real_comment_stats_for_save(
+        self,
+        db: Session,
+        work_id: int
+    ) -> Dict[str, int]:
+        """专门用于保存结果时的统计查询：从t_work_comment表统计真实的客户和客服回复数量（基于oper字段）"""
+        try:
+            # 根据work_id确定对应的评论表名，默认使用当前年份
+            comment_table_name = self.stage1.get_comment_table_name()
+            
+            # 统计所有评论的客户和客服数量
+            sql = f"""
+            SELECT 
+                COUNT(*) as total_count,
+                SUM(CASE WHEN oper = 0 THEN 1 ELSE 0 END) as customer_count,
+                SUM(CASE WHEN oper = 1 THEN 1 ELSE 0 END) as service_count
+            FROM {comment_table_name}
+            WHERE work_id = :work_id 
+            AND deleted = 0
+            """
+            
+            result = db.execute(text(sql), {"work_id": work_id}).fetchone()
+            
+            total_count = result.total_count if result and result.total_count else 0
+            customer_count = result.customer_count if result and result.customer_count else 0
+            service_count = result.service_count if result and result.service_count else 0
+            
+            logger.info(f"📊 保存时统计工单 {work_id}: 总{total_count}条，客户{customer_count}条，客服{service_count}条")
+            
+            return {
+                "total_comments": total_count,
+                "customer_messages": customer_count,  # 使用customer_messages保持与现有代码一致
+                "service_messages": service_count     # 使用service_messages保持与现有代码一致
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ 保存时统计工单 {work_id} 评论数量失败: {e}")
+            return {
+                "total_comments": 0,
+                "customer_messages": 0,
+                "service_messages": 0
+            }
 
     def save_analysis_result(
         self,
@@ -472,6 +515,13 @@ class Stage2AnalysisService:
         try:
             # 查询订单ID和订单编号
             order_id, order_no = self._get_order_info_by_work_id(db, work_id)
+            
+            # 🔥 获取正确的统计数据用于保存（基于oper字段）
+            correct_stats = self._get_real_comment_stats_for_save(db, work_id)
+            
+            # 将正确的统计数据覆盖到analysis_result中，仅用于数据库保存
+            analysis_result_for_save = analysis_result.copy()
+            analysis_result_for_save.update(correct_stats)
             
             # 🔥 修复：使用 INSERT ... ON DUPLICATE KEY UPDATE 语法避免重复插入
             # 这里使用 MySQL 的 UPSERT 语法，可以原子性地处理插入或更新
@@ -527,11 +577,27 @@ class Stage2AnalysisService:
                 updated_at = VALUES(updated_at)
             """
             
-            params = self._build_analysis_params(work_id, analysis_result, order_id, order_no)
+            params = self._build_analysis_params(work_id, analysis_result_for_save, order_id, order_no)
             params["created_at"] = datetime.now()
             params["updated_at"] = datetime.now()
             
-            result = db.execute(text(upsert_sql), params)
+            # 🔥 添加SQL执行的错误处理和日志
+            try:
+                result = db.execute(text(upsert_sql), params)
+            except Exception as sql_error:
+                logger.error(f"❌ SQL执行失败，工单 {work_id}，错误: {sql_error}")
+                logger.error(f"📊 参数长度统计: evidence_sentences={len(str(params.get('evidence_sentences', '')))}, "
+                           f"conversation_text={len(str(params.get('conversation_text', '')))}, "
+                           f"analysis_details={len(str(params.get('analysis_details', '')))}")
+                
+                # 尝试进一步简化数据重新保存
+                if 'evidence_sentences' in params:
+                    original_evidence = params['evidence_sentences']
+                    params['evidence_sentences'] = '{"error": "证据数据过长，已简化", "original_length": ' + str(len(original_evidence)) + '}'
+                    logger.info(f"🔄 简化evidence_sentences后重试保存工单 {work_id}")
+                    result = db.execute(text(upsert_sql), params)
+                else:
+                    raise sql_error
             
             # 检查是插入还是更新
             if result.rowcount == 1:
@@ -574,11 +640,12 @@ class Stage2AnalysisService:
             
             # 如果是列表，尝试减少元素数量
             if isinstance(data, list) and len(data) > 1:
-                reduced_count = max(1, len(data) // 2)
+                # 更激进的截断，直接保留前几个元素
+                reduced_count = min(3, len(data))  # 最多保留3个元素
                 truncated_data = data[:reduced_count]
                 # 添加截断标记
-                if isinstance(truncated_data[0], str):
-                    truncated_data.append(f"... (已截断，原始共{len(data)}项)")
+                if truncated_data and isinstance(truncated_data[0], (str, dict)):
+                    truncated_data.append({"truncated": True, "original_count": len(data), "note": "已截断避免保存错误"})
                 json_str = safe_json_dumps(truncated_data, ensure_ascii=False)
                 
                 # 如果还是太长，直接截断字符串
@@ -602,7 +669,7 @@ class Stage2AnalysisService:
             "conversation_text": 8000,      # TEXT字段通常8KB左右
             "llm_raw_response": 4000,       # JSON字段
             "analysis_details": 4000,       # JSON字段
-            "evidence_sentences": 3000,     # JSON字段
+            "evidence_sentences": 1500,     # JSON字段 - 减小长度避免SQL错误
             "improvement_suggestions": 2000, # JSON字段
             "evasion_types": 200,           # 字符串字段
             "matched_keywords": 2000,       # JSON字段
@@ -1228,15 +1295,13 @@ class Stage2AnalysisService:
                 create_time = message.get("create_time", "")
                 oper = message.get("oper", False)
                 
-                # 确定角色显示名称
-                if user_type == "customer":
-                    role = "客户"
-                elif user_type == "service" or oper:
-                    role = "客服"
-                elif user_type == "system":
+                # 确定角色显示名称 - 仅根据oper字段判断
+                if user_type == "system":
                     role = "系统"
-                else:
-                    role = user_type or "未知"
+                elif oper:  # oper为1，客服
+                    role = "客服"
+                else:  # oper为0，客户
+                    role = "客户"
                 
                 # 如果有名称，添加到角色后面
                 if name:
@@ -1304,15 +1369,13 @@ class Stage2AnalysisService:
                         create_time = message.get("create_time", "")
                         oper = message.get("oper", False)
                         
-                        # 确定角色显示名称
-                        if user_type == "customer":
-                            role = "客户"
-                        elif user_type == "service" or oper:
-                            role = "客服"
-                        elif user_type == "system":
+                        # 确定角色显示名称 - 仅根据oper字段判断
+                        if user_type == "system":
                             role = "系统"
-                        else:
-                            role = user_type or "未知"
+                        elif oper:  # oper为1，客服
+                            role = "客服"
+                        else:  # oper为0，客户
+                            role = "客户"
                         
                         # 如果有名称，添加到角色后面
                         if name:

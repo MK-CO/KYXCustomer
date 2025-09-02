@@ -59,7 +59,7 @@ mkdir -p /opt/ai-platform-smart/logs /opt/ai-platform-smart/data
 docker load -i /opt/ai-platform-smart-linux-amd64.tar
 
 # 验证镜像加载成功
-docker images ai-platform-smart
+  docker images ai-platform-smart
 ```
 
 ### 4.3 停止并删除旧容器（如果存在）
@@ -82,7 +82,7 @@ docker run -d \
   --restart unless-stopped \
   --privileged \
   -p 8993:8993 \
-  -v /opt/ai-platform-smart/application.properties:/app/application.properties:ro \
+  -v /opt/application.properties:/app/application.properties:ro \
   -v /opt/ai-platform-smart/logs:/app/logs \
   -v /opt/ai-platform-smart/data:/app/data \
   ai-platform-smart:latest

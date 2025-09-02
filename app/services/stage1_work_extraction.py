@@ -774,7 +774,7 @@ class Stage1WorkExtractionService:
         work_id: int,
         comment_table_name: str
     ) -> List[Dict[str, Any]]:
-        """获取指定工单的所有评论记录（仅处理人评论，oper=1）"""
+        """获取指定工单的所有评论记录（包括客户和客服的完整对话）"""
         try:
             sql = f"""
             SELECT 
@@ -791,7 +791,6 @@ class Stage1WorkExtractionService:
             FROM {comment_table_name}
             WHERE work_id = :work_id 
             AND deleted = 0
-            AND oper = 1
             ORDER BY create_time ASC
             """
             
@@ -813,7 +812,7 @@ class Stage1WorkExtractionService:
                     "source_table": comment_table_name
                 })
             
-            logger.info(f"从表 {comment_table_name} 获取工单 {work_id} 的 {len(comments)} 条处理人评论（oper=1）")
+            logger.info(f"从表 {comment_table_name} 获取工单 {work_id} 的 {len(comments)} 条完整对话记录（包含客户和客服）")
             return comments
             
         except Exception as e:
