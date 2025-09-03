@@ -586,18 +586,25 @@ class Stage2AnalysisService:
                 result = db.execute(text(upsert_sql), params)
             except Exception as sql_error:
                 logger.error(f"❌ SQL执行失败，工单 {work_id}，错误: {sql_error}")
-                logger.error(f"📊 参数长度统计: evidence_sentences={len(str(params.get('evidence_sentences', '')))}, "
-                           f"conversation_text={len(str(params.get('conversation_text', '')))}, "
-                           f"analysis_details={len(str(params.get('analysis_details', '')))}")
+                logger.error(f"📊 参数类型统计: evidence_sentences={type(params.get('evidence_sentences'))}, "
+                           f"matched_keywords={type(params.get('matched_keywords'))}, "
+                           f"analysis_details={type(params.get('analysis_details'))}")
+                logger.error(f"🔍 SQL语句片段: {upsert_sql[:200]}...")
                 
-                # 尝试进一步简化数据重新保存
-                if 'evidence_sentences' in params:
-                    original_evidence = params['evidence_sentences']
-                    params['evidence_sentences'] = '{"error": "证据数据过长，已简化", "original_length": ' + str(len(original_evidence)) + '}'
-                    logger.info(f"🔄 简化evidence_sentences后重试保存工单 {work_id}")
-                    result = db.execute(text(upsert_sql), params)
-                else:
-                    raise sql_error
+                # 🔥 修复：检查并修复可能的参数类型问题
+                # 确保所有JSON字段都是字符串类型
+                json_fields = ['evidence_sentences', 'matched_keywords', 'analysis_details', 
+                              'llm_raw_response', 'evasion_types', 'improvement_suggestions']
+                
+                for field in json_fields:
+                    if field in params and params[field] is not None:
+                        if not isinstance(params[field], str):
+                            # 如果不是字符串，使用safe_json_dumps转换
+                            params[field] = safe_json_dumps(params[field])
+                            logger.info(f"🔄 修复字段 {field} 的数据类型为字符串")
+                
+                logger.info(f"🔄 修复参数类型后重试保存工单 {work_id}")
+                result = db.execute(text(upsert_sql), params)
             
             # 检查是插入还是更新
             if result.rowcount == 1:
@@ -661,20 +668,13 @@ class Stage2AnalysisService:
             return f'{{"error": "数据过长已截断", "original_type": "{type(data).__name__}"}}'
 
     def _build_analysis_params(self, work_id: int, analysis_result: Dict[str, Any], order_id: Optional[int] = None, order_no: Optional[str] = None) -> Dict[str, Any]:
-        """构建分析结果参数，确保所有字段不超出数据库限制"""
+        """构建分析结果参数，保存完整原始数据"""
         import json
         
-        # 定义字段长度限制（根据数据库表结构设置）
-        FIELD_LIMITS = {
-            "conversation_text": 8000,      # TEXT字段通常8KB左右
-            "llm_raw_response": 4000,       # JSON字段
-            "analysis_details": 4000,       # JSON字段
-            "evidence_sentences": 1500,     # JSON字段 - 减小长度避免SQL错误
-            "improvement_suggestions": 2000, # JSON字段
-            "evasion_types": 200,           # 字符串字段
-            "matched_keywords": 2000,       # JSON字段
-            "analysis_note": 1500,          # 已在_build_enhanced_analysis_note中处理
-            "matched_categories": 500       # VARCHAR字段
+        # 🔥 移除长度限制 - 数据库字段都是TEXT/LONGTEXT类型，可以存储完整数据
+        # 只对VARCHAR字段保留必要限制
+        VARCHAR_LIMITS = {
+            "matched_categories": 500       # VARCHAR(255)字段
         }
         
         # 获取关键词筛选结果
@@ -722,14 +722,14 @@ class Stage2AnalysisService:
                     if isinstance(usage, dict):
                         llm_tokens_used = usage.get("total_tokens", 0)
         
-        # 安全处理匹配类别字段
+        # 安全处理匹配类别字段（VARCHAR字段需要限制长度）
         matched_categories_str = None
         if keyword_screening.get("matched_categories"):
             categories_list = keyword_screening["matched_categories"][:10]  # 最多10个类别
             categories_str = ",".join(categories_list)
-            matched_categories_str = self._safe_truncate_text(categories_str, FIELD_LIMITS["matched_categories"])
+            matched_categories_str = self._safe_truncate_text(categories_str, VARCHAR_LIMITS["matched_categories"])
         
-        # 构建保存参数字典，应用长度限制
+        # 🔥 构建保存参数字典，保存完整原始数据（TEXT/LONGTEXT字段无长度限制）
         save_params = {
             "work_id": work_id,
             "order_id": order_id,
@@ -742,23 +742,23 @@ class Stage2AnalysisService:
             "has_evasion": 1 if analysis_result.get("has_evasion", False) else 0,
             "risk_level": analysis_result.get("risk_level", "low"),
             "confidence_score": analysis_result.get("confidence_score", 0.0),
-            # JSON字段 - 应用长度限制
-            "evasion_types": self._safe_truncate_text(analysis_result.get("evasion_types", ""), FIELD_LIMITS["evasion_types"]),
-            "evidence_sentences": self._safe_truncate_json(analysis_result.get("evidence_sentences", []), FIELD_LIMITS["evidence_sentences"]),
-            "improvement_suggestions": self._safe_truncate_json(analysis_result.get("improvement_suggestions", []), FIELD_LIMITS["improvement_suggestions"]),
+            # JSON字段 - 保存完整数据
+            "evasion_types": safe_json_dumps(analysis_result.get("evasion_types", [])) if analysis_result.get("evasion_types") else None,
+            "evidence_sentences": safe_json_dumps(analysis_result.get("evidence_sentences", [])) if analysis_result.get("evidence_sentences") else None,
+            "improvement_suggestions": safe_json_dumps(analysis_result.get("improvement_suggestions", [])) if analysis_result.get("improvement_suggestions") else None,
             # 关键词筛选结果
             "keyword_screening_score": keyword_screening.get("confidence_score", 0.0),
-            "matched_categories": matched_categories_str,
-            "matched_keywords": self._safe_truncate_json(keyword_screening.get("matched_details", {}), FIELD_LIMITS["matched_keywords"]) if keyword_screening.get("matched_details") else None,
+            "matched_categories": matched_categories_str,  # VARCHAR字段，已处理长度限制
+            "matched_keywords": safe_json_dumps(keyword_screening.get("matched_details", {})) if keyword_screening.get("matched_details") else None,
             "is_suspicious": 1 if keyword_screening.get("is_suspicious", False) else 0,
             # 情感分析结果
             "sentiment": analysis_result.get("sentiment", "neutral"),
             "sentiment_intensity": analysis_result.get("sentiment_intensity", 0.0),
-            # 原始数据 - 应用长度限制
-            "conversation_text": self._safe_truncate_text(analysis_result.get("conversation_text", ""), FIELD_LIMITS["conversation_text"]),
-            "llm_raw_response": self._safe_truncate_json(llm_raw_response, FIELD_LIMITS["llm_raw_response"]) if llm_raw_response else None,
-            "analysis_details": self._safe_truncate_json(analysis_result, FIELD_LIMITS["analysis_details"]),
-            "analysis_note": self._build_enhanced_analysis_note(analysis_result),  # 内部已处理长度限制
+            # 原始数据 - 保存完整数据（LONGTEXT字段）
+            "conversation_text": analysis_result.get("conversation_text", ""),
+            "llm_raw_response": safe_json_dumps(llm_raw_response) if llm_raw_response else None,
+            "analysis_details": safe_json_dumps(analysis_result),
+            "analysis_note": self._build_enhanced_analysis_note(analysis_result),
             # LLM调用信息
             "llm_provider": llm_provider,
             "llm_model": llm_model,
