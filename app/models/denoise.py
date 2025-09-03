@@ -15,11 +15,16 @@ logger = logging.getLogger(__name__)
 
 def safe_json_dumps(obj: Any, ensure_ascii: bool = False) -> str:
     """
-    安全的JSON序列化函数，处理datetime等不可序列化的对象
+    安全的JSON序列化函数，处理datetime、Decimal等不可序列化的对象
     """
+    from decimal import Decimal
+    
     def json_serializer(obj):
         if isinstance(obj, datetime):
             return obj.isoformat()
+        elif isinstance(obj, Decimal):
+            # 将Decimal转换为float，保持数值精度
+            return float(obj)
         raise TypeError(f"Type {type(obj)} not serializable")
     
     return json.dumps(obj, ensure_ascii=ensure_ascii, default=json_serializer)

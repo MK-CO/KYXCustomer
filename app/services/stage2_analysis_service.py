@@ -483,9 +483,10 @@ class Stage2AnalysisService:
             
             result = db.execute(text(sql), {"work_id": work_id}).fetchone()
             
-            total_count = result.total_count if result and result.total_count else 0
-            customer_count = result.customer_count if result and result.customer_count else 0
-            service_count = result.service_count if result and result.service_count else 0
+            # 🔥 确保返回整数类型，避免Decimal序列化错误
+            total_count = int(result.total_count) if result and result.total_count else 0
+            customer_count = int(result.customer_count) if result and result.customer_count else 0
+            service_count = int(result.service_count) if result and result.service_count else 0
             
             logger.info(f"📊 保存时统计工单 {work_id}: 总{total_count}条，客户{customer_count}条，客服{service_count}条")
             
@@ -736,24 +737,24 @@ class Stage2AnalysisService:
             "order_no": order_no,
             "session_start_time": analysis_result.get("session_start_time"),
             "session_end_time": analysis_result.get("session_end_time"),
-            "total_comments": analysis_result.get("total_comments", 0),
-            "customer_comments": analysis_result.get("customer_messages", 0),
-            "service_comments": analysis_result.get("service_messages", 0),
+            "total_comments": int(analysis_result.get("total_comments", 0)),  # 确保是int类型
+            "customer_comments": int(analysis_result.get("customer_messages", 0)),  # 确保是int类型  
+            "service_comments": int(analysis_result.get("service_messages", 0)),  # 确保是int类型
             "has_evasion": 1 if analysis_result.get("has_evasion", False) else 0,
             "risk_level": analysis_result.get("risk_level", "low"),
-            "confidence_score": analysis_result.get("confidence_score", 0.0),
+            "confidence_score": float(analysis_result.get("confidence_score", 0.0)),  # 确保是float类型
             # JSON字段 - 保存完整数据
             "evasion_types": safe_json_dumps(analysis_result.get("evasion_types", [])) if analysis_result.get("evasion_types") else None,
             "evidence_sentences": safe_json_dumps(analysis_result.get("evidence_sentences", [])) if analysis_result.get("evidence_sentences") else None,
             "improvement_suggestions": safe_json_dumps(analysis_result.get("improvement_suggestions", [])) if analysis_result.get("improvement_suggestions") else None,
             # 关键词筛选结果
-            "keyword_screening_score": keyword_screening.get("confidence_score", 0.0),
+            "keyword_screening_score": float(keyword_screening.get("confidence_score", 0.0)),  # 确保是float类型
             "matched_categories": matched_categories_str,  # VARCHAR字段，已处理长度限制
             "matched_keywords": safe_json_dumps(keyword_screening.get("matched_details", {})) if keyword_screening.get("matched_details") else None,
             "is_suspicious": 1 if keyword_screening.get("is_suspicious", False) else 0,
             # 情感分析结果
             "sentiment": analysis_result.get("sentiment", "neutral"),
-            "sentiment_intensity": analysis_result.get("sentiment_intensity", 0.0),
+            "sentiment_intensity": float(analysis_result.get("sentiment_intensity", 0.0)),  # 确保是float类型
             # 原始数据 - 保存完整数据（LONGTEXT字段）
             "conversation_text": analysis_result.get("conversation_text", ""),
             "llm_raw_response": safe_json_dumps(llm_raw_response) if llm_raw_response else None,
@@ -762,7 +763,7 @@ class Stage2AnalysisService:
             # LLM调用信息
             "llm_provider": llm_provider,
             "llm_model": llm_model,
-            "llm_tokens_used": llm_tokens_used,
+            "llm_tokens_used": int(llm_tokens_used) if llm_tokens_used else 0,  # 确保是int类型
             # 时间戳
             "analysis_time": datetime.now()
         }
