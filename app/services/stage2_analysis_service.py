@@ -511,7 +511,21 @@ class Stage2AnalysisService:
         analysis_result: Dict[str, Any]
     ) -> bool:
         """保存AI分析结果到结果表"""
-        logger.info(f"💾 保存工单 {work_id} 分析结果: 风险级别={analysis_result.get('risk_level', 'low')}, 规避责任={analysis_result.get('has_evasion', False)}")
+        
+        # 🔥 修复：强制检查skip_save标记，确保低风险记录不被保存
+        if analysis_result.get("skip_save", False):
+            logger.info(f"⏭️ 工单 {work_id} 标记为跳过保存，不保存到数据库")
+            return True  # 返回True表示"成功处理"，但实际没有保存
+        
+        # 🔥 修复：检查风险级别，如果是low且无规避行为，也不保存
+        risk_level = analysis_result.get('risk_level', 'low')
+        has_evasion = analysis_result.get('has_evasion', False)
+        
+        if risk_level == 'low' and not has_evasion:
+            logger.info(f"⏭️ 工单 {work_id} 风险级别为低且无规避行为，不保存到数据库")
+            return True  # 返回True表示"成功处理"，但实际没有保存
+        
+        logger.info(f"💾 保存工单 {work_id} 分析结果: 风险级别={risk_level}, 规避责任={has_evasion}")
         
         try:
             # 查询订单ID和订单编号
@@ -971,39 +985,9 @@ class Stage2AnalysisService:
             return self._get_fallback_keywords_config()
 
     def _get_fallback_keywords_config(self) -> Dict[str, Dict[str, Any]]:
-        """获取备用的默认关键词配置（原硬编码配置作为备用）"""
-        logger.info("使用备用的默认关键词配置")
+        """获取备用的默认关键词配置（只保留推卸责任类别）"""
+        logger.warning("数据库关键词配置加载失败，使用备用配置（仅推卸责任类别）")
         return {
-            "紧急催促": {
-                "keywords": [
-                    "撕", "催", "紧急", "加急联系", "速度", "又来了", "怎么样了", "有进展了吗"
-                ],
-                "patterns": [
-                    r"(催|撕).{0,5}(催|撕)",  # 连续催促
-                    r"(又|一直).*(催|撕|来了)",
-                    r"(怎么样|进展).{0,10}(了|啊|呢|吗)",
-                    r"(紧急|加急).*(联系|处理|解决)",
-                    r"(速度|快点).*(处理|解决|搞定)",
-                    r"(有|没有).*(进展|结果|消息).*(了|吗|呢)"
-                ],
-                "weight": 0.9,  # 提高权重
-                "risk_level": "high"
-            },
-            "投诉纠纷": {
-                "keywords": [
-                    "纠纷单", "投诉", "退款了", "结果", "12315", "客诉", "翘单"
-                ],
-                "patterns": [
-                    r"(纠纷|投诉).*(单|了|啊|呢)",
-                    r"(退款|退钱).*(了|啊|呢)",
-                    r"(客诉|投诉).*12315",
-                    r"(翘单|逃单).{0,10}(了|呢)",
-                    r"(结果|进展).*(不知道|不清楚|没消息|怎么样)",
-                    r"12315.*(投诉|举报|客诉)"
-                ],
-                "weight": 1.2,  # 最高权重
-                "risk_level": "high"
-            },
             "推卸责任": {
                 "keywords": [
                     "不是我们的问题", "不是我们负责", "不关我们事", "找其他部门", "联系供应商", 
@@ -1323,7 +1307,11 @@ class Stage2AnalysisService:
                 else:
                     highlighted_display = f"{role_display}: {highlighted_content}"
                 
-                # 构建结构化的证据条目
+                # 计算匹配位置（关键词匹配）
+                match_start_pos = content.find(keyword)
+                match_end_pos = match_start_pos + len(keyword) if match_start_pos >= 0 else 0
+                
+                # 构建结构化的证据条目（标准格式）
                 evidence_entry = {
                     "rule_type": "keyword",  # 规则类型：keyword 或 pattern
                     "rule_name": category,  # 规则名称/类别
@@ -1340,7 +1328,23 @@ class Stage2AnalysisService:
                     "user_type": user_type,   # 用户类型
                     "user_name": name,        # 用户姓名
                     "create_time": create_time, # 消息创建时间
-                    "evidence_timestamp": datetime.now().isoformat()  # 证据提取时间戳
+                    "match_start_pos": match_start_pos,  # 匹配开始位置
+                    "match_end_pos": match_end_pos,      # 匹配结束位置
+                    "evidence_timestamp": datetime.now().isoformat(),  # 证据提取时间戳
+                    # 初始LLM分析信息（后续会被_enhance_evidence_with_llm_analysis方法更新）
+                    "llm_analysis": {
+                        "llm_confirmed": False,
+                        "llm_risk_assessment": "unknown",
+                        "llm_analysis_reason": "待LLM分析",
+                        "llm_match_score": 0.0,
+                        "llm_evidence_match": None,
+                        "llm_suggestion": "",
+                        "regex_matched": True,  # 关键词匹配成功
+                        "llm_overridden": False,  # 初始状态
+                        "confidence_explanation": f"关键词 '{keyword}' 在类别 '{category}' 中匹配成功"
+                    },
+                    "analysis_timestamp": datetime.now().isoformat(),  # 分析时间戳
+                    "evidence_status": "regex_matched"  # 证据状态：正则匹配
                 }
                 
                 evidence_list.append(evidence_entry)
@@ -1397,7 +1401,7 @@ class Stage2AnalysisService:
                         else:
                             highlighted_display = f"{role_display}: {highlighted_content}"
                         
-                        # 构建结构化的证据条目
+                        # 构建结构化的证据条目（标准格式）
                         evidence_entry = {
                             "rule_type": "pattern",  # 规则类型：keyword 或 pattern
                             "rule_name": category,   # 规则名称/类别
@@ -1416,7 +1420,21 @@ class Stage2AnalysisService:
                             "create_time": create_time, # 消息创建时间
                             "match_start_pos": match.start(),  # 匹配开始位置（在消息内容中）
                             "match_end_pos": match.end(),      # 匹配结束位置（在消息内容中）
-                            "evidence_timestamp": datetime.now().isoformat()  # 证据提取时间戳
+                            "evidence_timestamp": datetime.now().isoformat(),  # 证据提取时间戳
+                            # 初始LLM分析信息（后续会被_enhance_evidence_with_llm_analysis方法更新）
+                            "llm_analysis": {
+                                "llm_confirmed": False,
+                                "llm_risk_assessment": "unknown", 
+                                "llm_analysis_reason": "待LLM分析",
+                                "llm_match_score": 0.0,
+                                "llm_evidence_match": None,
+                                "llm_suggestion": "",
+                                "regex_matched": True,  # 正则匹配成功
+                                "llm_overridden": False,  # 初始状态
+                                "confidence_explanation": f"正则模式 '{pattern}' 在类别 '{category}' 中匹配成功"
+                            },
+                            "analysis_timestamp": datetime.now().isoformat(),  # 分析时间戳
+                            "evidence_status": "pattern_matched"  # 证据状态：正则模式匹配
                         }
                         
                         evidence_list.append(evidence_entry)
@@ -1499,13 +1517,21 @@ class Stage2AnalysisService:
             "sentiment_intensity": llm_analysis.get("sentiment_intensity", 0.0),
         }
         
-        # 🔥 新增：将LLM分析结果关联到每条证据
+        # 🔥 关键修复：处理LLM找到证据但正则匹配为空的情况
         enhanced_evidence = self._enhance_evidence_with_llm_analysis(detailed_evidence, llm_analysis)
         
-        # 证据信息使用增强后的结构化结果
+        # 🔥 如果正则匹配没有找到证据，但LLM分析找到了evidence_sentences，需要创建结构化证据
+        if len(enhanced_evidence) == 0 and llm_analysis.get("evidence_sentences"):
+            logger.debug("正则匹配无证据，但LLM分析找到证据，创建结构化证据对象")
+            enhanced_evidence = self._create_llm_evidence_objects(
+                llm_analysis, conversation_data.get("messages", [])
+            )
+        
+        # 🔥 修复：evidence_sentences始终使用标准结构化格式
+        # evidence_sentences使用完整的结构化证据对象数组（与用户要求的标准格式一致）
         merged_result.update({
-            "evidence_sentences": enhanced_evidence,  # 使用增强后的证据
-            "detailed_evidence": enhanced_evidence,   # 保持兼容性
+            "evidence_sentences": enhanced_evidence,  # 使用完整的结构化证据对象数组
+            "detailed_evidence": enhanced_evidence,   # 保持兼容性，用于详细分析  
             "matched_keywords": [e.get("matched_keyword") for e in enhanced_evidence if e.get("matched_keyword")],
             "evidence_count": len(enhanced_evidence),
         })
@@ -1554,10 +1580,14 @@ class Stage2AnalysisService:
             message_content = evidence.get("message_content", "")
             conversation_context = evidence.get("conversation_context", "")
             
-            # 🔥 新增LLM分析相关字段
+            # 🔥 更新LLM分析相关字段
             # 如果LLM成功分析了（有risk_level结果），则认为LLM确实进行了分析
             llm_has_analysis = bool(llm_analysis.get("risk_level")) and llm_analysis.get("risk_level") != "unknown"
             
+            # 获取现有的llm_analysis字段（如果存在）并进行更新
+            current_llm_analysis = enhanced_evidence_item.get("llm_analysis", {})
+            
+            # 更新LLM分析信息
             llm_analysis_info = {
                 "llm_confirmed": False,  # LLM是否确认此证据有问题（默认为False，只有匹配到才设为True）
                 "llm_risk_assessment": llm_analysis.get("risk_level", "low") if llm_has_analysis else "unknown",  # LLM对此证据的风险评估
@@ -1565,6 +1595,9 @@ class Stage2AnalysisService:
                 "llm_match_score": 0.0,           # 与LLM证据的匹配度
                 "llm_evidence_match": None,       # 匹配到的LLM证据句子
                 "llm_suggestion": "此内容经LLM分析认为是正常业务对话" if llm_has_analysis else "",  # LLM针对此证据的建议
+                "regex_matched": current_llm_analysis.get("regex_matched", True),  # 保留正则匹配状态
+                "llm_overridden": False,  # 初始状态，后续可能更新
+                "confidence_explanation": current_llm_analysis.get("confidence_explanation", ""),  # 保留置信度解释
             }
             
             # 尝试将此证据与LLM识别的证据句子进行匹配
@@ -1595,8 +1628,11 @@ class Stage2AnalysisService:
                     "llm_suggestion": self._extract_relevant_suggestion(
                         llm_analysis.get("improvement_suggestions", []), 
                         evidence.get("category", "")
-                    )
+                    ),
+                    "llm_overridden": False,  # LLM确认了正则匹配
+                    "confidence_explanation": f"正则匹配命中 '{evidence.get('category')}' 分类，LLM分析确认存在问题行为"
                 })
+                enhanced_evidence_item["evidence_status"] = "regex_hit_llm_confirmed"
             else:
                 # 未匹配到LLM证据，但可能是相关类别
                 category = evidence.get("category", "")
@@ -1609,16 +1645,190 @@ class Stage2AnalysisService:
                         "llm_suggestion": self._extract_relevant_suggestion(
                             llm_analysis.get("improvement_suggestions", []), 
                             category
-                        )
+                        ),
+                        "llm_overridden": False,  # LLM确认了正则匹配
+                        "confidence_explanation": f"正则匹配命中 '{category}' 分类，LLM分析确认存在相关问题行为"
                     })
+                    enhanced_evidence_item["evidence_status"] = "regex_hit_llm_category_match"
+                else:
+                    # LLM未确认此证据，可能是误报
+                    llm_analysis_info.update({
+                        "llm_overridden": True,  # LLM覆盖了正则匹配结果
+                        "confidence_explanation": f"正则匹配命中 '{category}' 分类，但LLM分析认为是正常对话"
+                    })
+                    enhanced_evidence_item["evidence_status"] = "regex_hit_llm_normal"
             
-            # 添加LLM分析信息到证据中
+            # 更新证据中的LLM分析信息
             enhanced_evidence_item["llm_analysis"] = llm_analysis_info
             enhanced_evidence_item["analysis_timestamp"] = datetime.now().isoformat()
             
             enhanced_evidence.append(enhanced_evidence_item)
         
         return enhanced_evidence
+    
+    def _create_llm_evidence_objects(
+        self, 
+        llm_analysis: Dict[str, Any], 
+        messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """从LLM分析结果创建结构化证据对象"""
+        
+        evidence_objects = []
+        llm_evidence_sentences = llm_analysis.get("evidence_sentences", [])
+        
+        if not llm_evidence_sentences:
+            return []
+        
+        # 确保llm_evidence_sentences是列表
+        if isinstance(llm_evidence_sentences, str):
+            llm_evidence_sentences = [llm_evidence_sentences]
+        
+        logger.debug(f"LLM分析找到 {len(llm_evidence_sentences)} 条证据句子，尝试在 {len(messages)} 条消息中匹配")
+        
+        for idx, evidence_sentence in enumerate(llm_evidence_sentences):
+            if not evidence_sentence or not isinstance(evidence_sentence, str):
+                continue
+            
+            # 在消息列表中查找包含该证据的消息
+            matched_message = None
+            matched_message_idx = -1
+            best_similarity = 0.0
+            
+            for msg_idx, message in enumerate(messages):
+                content = str(message.get("content", "")).strip()
+                if not content:
+                    continue
+                
+                # 计算相似度
+                similarity = self._calculate_text_similarity(evidence_sentence, content)
+                if similarity > best_similarity and similarity > 0.3:  # 需要一定的相似度阈值
+                    best_similarity = similarity
+                    matched_message = message
+                    matched_message_idx = msg_idx
+            
+            # 构建证据对象
+            if matched_message:
+                # 找到匹配的消息，使用实际消息信息
+                user_type = matched_message.get("user_type", "")
+                name = matched_message.get("name", "")
+                create_time = matched_message.get("create_time", "")
+                oper = matched_message.get("oper", False)
+                
+                # 确定角色显示名称
+                if user_type == "system":
+                    role = "系统"
+                elif oper:
+                    role = "客服"
+                else:
+                    role = "客户"
+                
+                if name:
+                    role_display = f"{role}({name})"
+                else:
+                    role_display = role
+                
+                # 构建消息显示格式
+                message_content = matched_message.get("content", "")
+                if create_time:
+                    conversation_context = f"[{create_time}] {role_display}: {message_content}"
+                else:
+                    conversation_context = f"{role_display}: {message_content}"
+                
+                # 高亮证据内容
+                highlighted_context = conversation_context.replace(evidence_sentence, f"【{evidence_sentence}】")
+                
+                # 计算匹配位置
+                match_start_pos = message_content.find(evidence_sentence)
+                match_end_pos = match_start_pos + len(evidence_sentence) if match_start_pos >= 0 else 0
+            else:
+                # 没有找到匹配消息，创建虚拟证据对象
+                logger.warning(f"LLM证据句子未在消息中找到匹配: {evidence_sentence}")
+                user_type = "SYSTEM"
+                name = "LLM分析"
+                create_time = None
+                role_display = "LLM分析"
+                message_content = evidence_sentence
+                conversation_context = f"LLM分析发现: {evidence_sentence}"
+                highlighted_context = f"LLM分析发现: 【{evidence_sentence}】"
+                matched_message_idx = -1
+                match_start_pos = 0
+                match_end_pos = len(evidence_sentence)
+            
+            # 处理evasion_types可能是数组或字符串的情况
+            evasion_types = llm_analysis.get("evasion_types", "LLM识别")
+            if isinstance(evasion_types, list):
+                evasion_type_str = evasion_types[0] if evasion_types else "LLM识别"
+            else:
+                evasion_type_str = str(evasion_types) if evasion_types else "LLM识别"
+            
+            # 创建标准格式的证据对象
+            evidence_entry = {
+                "rule_type": "llm_analysis",  # LLM分析类型
+                "rule_name": evasion_type_str,  # LLM识别的类别
+                "category": evasion_type_str,
+                "matched_keyword": None,  # LLM分析不是基于关键词匹配
+                "matched_pattern": None,  # LLM分析不是基于正则模式
+                "matched_text": evidence_sentence,  # LLM识别的证据文本
+                "message_content": message_content,  # 原始消息内容
+                "conversation_context": conversation_context,  # 完整消息显示格式
+                "highlighted_context": highlighted_context,  # 高亮后的消息显示
+                "config_id": None,  # LLM分析没有配置ID
+                "message_index": matched_message_idx,  # 消息索引
+                "message_id": matched_message.get("id") if matched_message else None,
+                "user_type": user_type,
+                "user_name": name,
+                "create_time": create_time,
+                "match_start_pos": match_start_pos,
+                "match_end_pos": match_end_pos,
+                "evidence_timestamp": datetime.now().isoformat(),
+                # LLM分析信息
+                "llm_analysis": {
+                    "llm_confirmed": True,  # LLM分析直接确认
+                    "llm_risk_assessment": llm_analysis.get("risk_level", "unknown"),
+                    "llm_analysis_reason": f"LLM直接识别此内容属于{evasion_type_str}行为",
+                    "llm_match_score": round(best_similarity, 3) if matched_message else 1.0,
+                    "llm_evidence_match": evidence_sentence,
+                    "llm_suggestion": self._extract_relevant_suggestion(
+                        llm_analysis.get("improvement_suggestions", []), 
+                        evasion_type_str
+                    ),
+                    "regex_matched": False,  # 不是正则匹配
+                    "llm_overridden": False,  # 不是覆盖结果
+                    "confidence_explanation": f"LLM直接分析识别出 '{evasion_type_str}' 类型的证据"
+                },
+                "analysis_timestamp": datetime.now().isoformat(),
+                "evidence_status": "llm_identified"  # LLM直接识别的证据
+            }
+            
+            evidence_objects.append(evidence_entry)
+        
+        logger.info(f"从LLM分析结果创建了 {len(evidence_objects)} 个结构化证据对象")
+        return evidence_objects
+    
+    def _calculate_text_similarity(self, text1: str, text2: str) -> float:
+        """计算两个文本的相似度（简单实现）"""
+        if not text1 or not text2:
+            return 0.0
+        
+        # 检查text1是否是text2的子字符串
+        if text1 in text2:
+            return 1.0
+        
+        # 检查text2是否是text1的子字符串  
+        if text2 in text1:
+            return len(text2) / len(text1)
+        
+        # 计算词级别的重叠度
+        words1 = set(text1.split())
+        words2 = set(text2.split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = len(words1.intersection(words2))
+        union = len(words1.union(words2))
+        
+        return intersection / union if union > 0 else 0.0
     
     def _calculate_evidence_similarity(self, message_content: str, conversation_context: str, llm_sentence: str) -> float:
         """计算证据与LLM识别句子的相似度"""
@@ -1683,6 +1893,9 @@ class Stage2AnalysisService:
         for evidence in detailed_evidence:
             enhanced_evidence_item = evidence.copy()
             
+            # 获取现有的llm_analysis字段并更新
+            current_llm_analysis = enhanced_evidence_item.get("llm_analysis", {})
+            
             # 🔥 低风险情况的特殊LLM分析信息
             low_risk_analysis = {
                 "llm_confirmed": False,  # LLM不确认此证据有问题
@@ -1691,12 +1904,12 @@ class Stage2AnalysisService:
                 "llm_match_score": 0.0,  # 匹配度设为0
                 "llm_evidence_match": None,  # 无匹配的LLM证据
                 "llm_suggestion": "此内容经LLM分析认为是正常业务对话，无需改进",
-                "regex_matched": True,  # 标记正则匹配成功
+                "regex_matched": current_llm_analysis.get("regex_matched", True),  # 标记正则匹配成功
                 "llm_overridden": True,  # 标记LLM覆盖了正则判定
                 "confidence_explanation": f"正则匹配命中 '{evidence.get('category')}' 分类，但LLM分析认为是误报或正常情况"
             }
             
-            # 添加低风险分析信息
+            # 更新证据中的LLM分析信息
             enhanced_evidence_item["llm_analysis"] = low_risk_analysis
             enhanced_evidence_item["analysis_timestamp"] = datetime.now().isoformat()
             
@@ -1988,7 +2201,6 @@ class Stage2AnalysisService:
                 # 🔥 第一步：收集正则匹配的证据
                 logger.debug(f"📋 工单 {work_id} 开始收集正则匹配证据...")
                 matched_risk_levels = []
-                evidence_sentences = []
                 matched_keywords = []
                 detailed_evidence = []
                 
@@ -2001,13 +2213,11 @@ class Stage2AnalysisService:
                             matched_keywords.extend(details["keywords"])
                             for keyword in details["keywords"]:
                                 sentences = self._extract_evidence_sentences(messages, keyword, category)
-                                evidence_sentences.extend(sentences)
                                 detailed_evidence.extend(sentences)
                         
                         # 收集正则模式匹配的具体内容
                         if details.get("patterns"):
                             pattern_matches = self._extract_pattern_evidence(messages, details["patterns"], category)
-                            evidence_sentences.extend(pattern_matches)
                             detailed_evidence.extend(pattern_matches)
                 
                 logger.info(f"📊 工单 {work_id} 正则匹配结果: 收集到 {len(detailed_evidence)} 条证据")
@@ -2106,7 +2316,7 @@ class Stage2AnalysisService:
                         "risk_level": final_risk_level,
                         "confidence_score": min(keyword_result["confidence_score"], 1.0),
                         "evasion_types": keyword_result["matched_categories"][0] if keyword_result["matched_categories"] else "",
-                        "evidence_sentences": evidence_sentences,
+                        "evidence_sentences": detailed_evidence,
                         "detailed_evidence": detailed_evidence,
                         "improvement_suggestions": [f"检测到 {', '.join(keyword_result['matched_categories'])} 相关行为，建议加强服务质量管控和人员培训"],
                         "sentiment": "negative",
