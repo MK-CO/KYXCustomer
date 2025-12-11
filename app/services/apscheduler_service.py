@@ -44,9 +44,9 @@ class APSchedulerService:
         
         # 作业默认配置
         job_defaults = {
-            'coalesce': False,  # 不合并作业
+            'coalesce': True,  # 合并多个错过的作业执行为一次
             'max_instances': 3,  # 最大实例数
-            'misfire_grace_time': 30  # 允许30秒延迟
+            'misfire_grace_time': 86400 * 7  # 允许7天延迟（604800秒），支持长周期任务
         }
         
         # 创建调度器
@@ -174,9 +174,21 @@ class APSchedulerService:
                     trigger_desc = f"每{schedule_interval}秒"
             else:
                 # 使用interval触发器
+                # 🔥 修复：添加 start_date，确保长周期任务正确调度
+                # 如果有 next_execution_time，从该时间开始；否则立即开始
+                start_time = None
+                if config.get("next_execution_time"):
+                    try:
+                        from datetime import datetime
+                        start_time = datetime.fromisoformat(config["next_execution_time"].replace('Z', '+00:00'))
+                        logger.info(f"📅 使用已保存的下次执行时间: {start_time}")
+                    except:
+                        pass
+
                 job_kwargs.update({
                     'trigger': 'interval',
-                    'seconds': schedule_interval
+                    'seconds': schedule_interval,
+                    'start_date': start_time  # 指定开始时间，确保调度连续性
                 })
                 trigger_desc = f"每{schedule_interval}秒"
                 logger.info(f"➕ 注册间隔任务: {task_name} - {trigger_desc}")
