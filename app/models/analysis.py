@@ -56,6 +56,13 @@ class WorkCommentAnalysisResult(Base):
     total_comments = Column(Integer, default=0, comment="总回复数")
     customer_comments = Column(Integer, default=0, comment="客户回复数")
     service_comments = Column(Integer, default=0, comment="客服回复数")
+    work_create_time = Column(DateTime, nullable=True, comment="工单创建时间")
+    first_service_reply_name = Column(String(100), nullable=True, comment="首次客服回复姓名")
+    first_response_seconds = Column(Integer, nullable=True, comment="首次客服响应耗时(秒)")
+    first_response_timeout = Column(Boolean, default=False, comment="首次响应是否超时")
+    first_response_rule_seconds = Column(Integer, default=120, comment="首次响应超时阈值(秒)")
+    first_customer_message_time = Column(DateTime, nullable=True, comment="商家首条消息时间")
+    first_service_reply_time = Column(DateTime, nullable=True, comment="客服首次回复时间")
     
     # 规避责任检测结果
     has_evasion = Column(Integer, default=0, comment="是否规避责任 0/1")
@@ -101,4 +108,5 @@ class WorkCommentAnalysisResult(Base):
         Index('idx_analysis_time_analysis', 'analysis_time'),
         Index('idx_session_start_time_analysis', 'session_start_time'),
         Index('idx_confidence_score_analysis', 'confidence_score'),
+        Index('idx_first_response_timeout', 'first_response_timeout'),
     )

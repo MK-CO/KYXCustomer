@@ -120,7 +120,13 @@ class Stage2AnalysisService:
                 
                 if valid_comments:
                     with_comments_count += 1
-                    comment_data = self._build_conversation_json(valid_comments)
+                    comment_data = self._build_conversation_json(
+                        valid_comments,
+                        work_type=order.get("work_type"),
+                        work_table_name=order.get("work_table_name"),
+                        raw_comments=comments,
+                        work_create_time=order.get("create_time")
+                    )
                     logger.info(f"✅ 工单 {work_id} 有 {len(valid_comments)} 条有效评论，构建完成对话数据")
                     
                     # 更新工单评论统计
@@ -195,9 +201,16 @@ class Stage2AnalysisService:
                 "message": "获取评论数据失败"
             }
     
-    def _build_conversation_json(self, comments: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _build_conversation_json(
+        self,
+        comments: List[Dict[str, Any]],
+        work_type: Optional[str] = None,
+        work_table_name: Optional[str] = None,
+        raw_comments: Optional[List[Dict[str, Any]]] = None,
+        work_create_time: Optional[Any] = None
+    ) -> Dict[str, Any]:
         """构建工单对话JSON结构"""
-        if not comments:
+        if not comments and not (raw_comments or []):
             return {
                 "work_id": None,
                 "total_messages": 0,
@@ -206,6 +219,7 @@ class Stage2AnalysisService:
                 "system_messages": 0,
                 "conversation_text": "",
                 "messages": [],
+                "first_response": self._build_empty_first_response(),
                 "session_info": {
                     "start_time": None,
                     "end_time": None,
@@ -213,7 +227,9 @@ class Stage2AnalysisService:
                 }
             }
         
-        work_id = comments[0]["work_id"]
+        # 用于首响的时间轴数据优先使用未过滤的原始评论
+        timeline_comments = raw_comments if raw_comments else comments
+        work_id = (timeline_comments or comments)[0]["work_id"]
         
         # 统计消息类型
         customer_count = 0
@@ -243,13 +259,15 @@ class Stage2AnalysisService:
                 "content": str(comment.get("content") or ""),  # 防止NoneType错误
                 "create_time": comment["create_time"].isoformat() if isinstance(comment["create_time"], datetime) else str(comment["create_time"]),
                 "oper": oper,
+                "oper_raw": comment.get("oper"),
                 "image": comment.get("image"),
                 "reissue": comment.get("reissue", 0)
             })
         
-        # 计算会话时长
-        start_time = comments[0]["create_time"]
-        end_time = comments[-1]["create_time"]
+        # 计算会话时长（使用展示用comments；如果展示为空，回退到timeline）
+        base_for_time = comments if comments else timeline_comments
+        start_time = base_for_time[0]["create_time"]
+        end_time = base_for_time[-1]["create_time"]
         duration_minutes = 0
         
         if isinstance(start_time, datetime) and isinstance(end_time, datetime):
@@ -258,6 +276,18 @@ class Stage2AnalysisService:
         
         # 构建对话文本
         conversation_text = self.stage1.build_conversation_text(comments)
+        is_after_sale = self._is_after_sale_order(work_type, work_table_name)
+        first_response_source = timeline_comments if timeline_comments else comments
+        first_response = self._compute_first_response_metrics(first_response_source) if is_after_sale else self._build_empty_first_response()
+        try:
+            log_wid = work_id
+        except Exception:
+            log_wid = None
+        logger.info(
+            f"🧾 工单 {log_wid} 首响开关: work_type={work_type}, work_table_name={work_table_name}, "
+            f"is_after_sale={is_after_sale}, raw_comments={len(raw_comments) if raw_comments else 0}, "
+            f"valid_comments={len(comments)}"
+        )
         
         return {
             "work_id": work_id,
@@ -267,6 +297,7 @@ class Stage2AnalysisService:
             "system_messages": system_count,
             "conversation_text": conversation_text,
             "messages": messages,
+            "first_response": first_response,
             "session_info": {
                 "start_time": start_time.isoformat() if isinstance(start_time, datetime) else str(start_time),
                 "end_time": end_time.isoformat() if isinstance(end_time, datetime) else str(end_time),
@@ -275,11 +306,162 @@ class Stage2AnalysisService:
             "metadata": {
                 "extracted_at": datetime.now().isoformat(),
                 "source_table": comments[0].get("source_table", ""),
-                "comment_ids": [c["id"] for c in comments]
-            }
+                "comment_ids": [c["id"] for c in comments],
+                "work_type": work_type,
+                "work_table_name": work_table_name
+            },
+            "session_id": work_id,
+            "work_create_time": work_create_time
         }
     
     # ==================== 去噪处理方法 ====================
+    
+    def _compute_first_response_metrics(self, comments: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """计算首响时长及超时标记"""
+        threshold_minutes = settings.service_first_response_threshold_minutes
+        threshold_seconds = int(threshold_minutes * 60)
+        try:
+            work_id_for_log = comments[0].get("work_id")
+        except Exception:
+            work_id_for_log = None
+        logger.info(f"⏳ 工单 {work_id_for_log} 首响计算开始，评论总数={len(comments)}")
+        
+        customer_first_message_time = None
+        service_first_reply_time = None
+        first_service_reply_name = None
+        
+        def _is_service(oper_value: Any, user_type: str) -> bool:
+            """兼容 MySQL BIT(1)，并且将 SELLER/CUSTOMER 视为客户，即便 oper=1"""
+            user_type_upper = (user_type or "").upper()
+            if user_type_upper in ("SELLER", "CUSTOMER"):
+                return False
+            if user_type_upper in ("SERVICE", "EMPLOYEE"):
+                return True
+            if user_type_upper == "SYSTEM":
+                return False
+            if oper_value is None:
+                return False
+            if isinstance(oper_value, (bool, int)):
+                return bool(oper_value)
+            if isinstance(oper_value, (bytes, bytearray)):
+                # b'\x00' -> 0, b'\x01' -> 1
+                try:
+                    return int.from_bytes(oper_value, byteorder="big") > 0
+                except Exception:
+                    return bool(oper_value)
+            return bool(oper_value)
+        
+        def _is_customer(oper_value: Any, user_type: str) -> bool:
+            user_type_upper = (user_type or "").upper()
+            if user_type_upper in ("SELLER", "CUSTOMER"):
+                return True
+            if user_type_upper in ("SERVICE", "EMPLOYEE", "SYSTEM"):
+                return False
+            return not _is_service(oper_value, user_type)
+        
+        for comment in comments:
+            create_time = comment.get("create_time")
+            user_type = comment.get("user_type")
+            oper_value = comment.get("oper")
+            is_service = _is_service(oper_value, user_type or "")
+            is_customer = _is_customer(oper_value, user_type or "")
+            
+            logger.info(
+                f"👀 工单 {work_id_for_log} 评论巡检: id={comment.get('id')}, "
+                f"user_type={user_type}, oper_raw={oper_value}, is_service={is_service}, "
+                f"is_customer={is_customer}, create_time={create_time}"
+            )
+            
+            if customer_first_message_time is None and is_customer:
+                customer_first_message_time = create_time
+                logger.info(f"🎯 工单 {work_id_for_log} 首条客户消息锁定: {create_time}")
+                continue
+            
+            if customer_first_message_time and is_service:
+                service_first_reply_time = create_time
+                first_service_reply_name = comment.get("name") or comment.get("user_id")
+                logger.info(f"🎯 工单 {work_id_for_log} 首条客服回复锁定: {create_time}")
+                break
+        
+        response_seconds = None
+        if isinstance(customer_first_message_time, datetime) and isinstance(service_first_reply_time, datetime):
+            response_seconds = int((service_first_reply_time - customer_first_message_time).total_seconds())
+            # 防止异常负数
+            response_seconds = max(response_seconds, 0)
+        
+        is_timeout = False
+        if customer_first_message_time:
+            if response_seconds is None or response_seconds > threshold_seconds:
+                is_timeout = True
+        
+        try:
+            work_id = comments[0].get("work_id")
+        except Exception:
+            work_id = None
+        logger.info(
+            f"⏱️ 工单 {work_id} 首响计算: "
+            f"first_customer_message_time={customer_first_message_time}, "
+            f"first_service_reply_time={service_first_reply_time}, "
+            f"response_seconds={response_seconds}, "
+            f"threshold_seconds={threshold_seconds}, "
+            f"is_timeout={is_timeout}"
+        )
+        
+        return {
+            "customer_first_message_time": customer_first_message_time,
+            "service_first_reply_time": service_first_reply_time,
+            "response_seconds": response_seconds,
+            "threshold_seconds": threshold_seconds,
+            "threshold_minutes": threshold_minutes,
+            "is_timeout": is_timeout,
+            "first_service_reply_name": first_service_reply_name
+        }
+    
+    def _build_empty_first_response(self) -> Dict[str, Any]:
+        """非售后工单默认的首响占位"""
+        return {
+            "customer_first_message_time": None,
+            "service_first_reply_time": None,
+            "response_seconds": None,
+            "threshold_seconds": settings.service_first_response_threshold_minutes * 60,
+            "threshold_minutes": settings.service_first_response_threshold_minutes,
+            "is_timeout": False
+        }
+    
+    def _normalize_datetime_value(self, value: Any) -> Any:
+        """尽可能将字符串时间解析为datetime"""
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except Exception:
+                return value
+        return value
+    
+    def _build_first_response_payload(self, first_response: Dict[str, Any]) -> Dict[str, Any]:
+        """整理首响指标，方便后续统一写库"""
+        if first_response is None:
+            first_response = {}
+        
+        threshold_seconds = first_response.get("threshold_seconds", settings.service_first_response_threshold_minutes * 60)
+        return {
+            "first_response_seconds": first_response.get("response_seconds"),
+            "first_response_timeout": bool(first_response.get("is_timeout", False)),
+            "first_response_rule_seconds": threshold_seconds,
+            "first_customer_message_time": self._normalize_datetime_value(first_response.get("customer_first_message_time")),
+            "first_service_reply_time": self._normalize_datetime_value(first_response.get("service_first_reply_time")),
+            "first_service_reply_name": first_response.get("first_service_reply_name")
+        }
+    
+    def _is_after_sale_order(self, work_type: Optional[str], work_table_name: Optional[str]) -> bool:
+        """简单识别售后工单，现阶段仅售后触发首响计算"""
+        if work_table_name and work_table_name.startswith("t_work_order"):
+            return True
+        if not work_type:
+            logger.info("⚠️ 首响计算跳过：缺少 work_type，且表名未识别为售后分表")
+            return False
+        wt = str(work_type).upper()
+        after_sale_prefixes = ("AFTER_SALE", "AFTERSALE")
+        return any(wt.startswith(p) for p in after_sale_prefixes)
     
     def apply_denoise_to_work_orders(
         self,
@@ -377,7 +559,13 @@ class Stage2AnalysisService:
                 if denoise_result.get("denoise_record", {}).get("saved"):
                     logger.debug(f"💾 工单 {work_id} 去噪记录已保存，批次: {denoise_result['denoise_record']['batch_id']}")
             
-            comment_data = self._build_conversation_json(valid_comments) if valid_comments else None
+            comment_data = self._build_conversation_json(
+                valid_comments,
+                work_type=target_order.get("work_type"),
+                work_table_name=target_order.get("work_table_name"),
+                raw_comments=comments,
+                work_create_time=target_order.get("create_time")
+            ) if valid_comments else None
             
             # 4. 构建结果
             result = {
@@ -433,31 +621,48 @@ class Stage2AnalysisService:
     def _get_order_info_by_work_id(self, db: Session, work_id: int) -> tuple[Optional[int], Optional[str]]:
         """根据工单ID查询订单ID和订单编号"""
         try:
-            # 获取当前年份，构造工单表名
+            # 获取当前年份，构造优先查询的工单表
             current_year = datetime.now().year
-            work_order_table = f"t_work_order_{current_year}"
+            base_name = "t_work_order"
+            preferred_table = f"{base_name}_{current_year}"
             
-            sql = f"""
-            SELECT order_id, order_no FROM {work_order_table} 
+            # 发现所有可用的 t_work_order 分表，优先使用当前年份
+            available_tables = self.stage1.discover_work_tables(db, base_name=base_name)
+            candidate_tables = []
+            if preferred_table not in candidate_tables:
+                candidate_tables.append(preferred_table)
+            for table in available_tables:
+                if table not in candidate_tables:
+                    candidate_tables.append(table)
+            
+            if not candidate_tables:
+                logger.warning("⚠️ 未找到任何 t_work_order 分表，无法查询订单信息")
+                return None, None
+            
+            sql_template = """
+            SELECT order_id, order_no FROM {table_name} 
             WHERE id = :work_id 
             LIMIT 1
             """
             
-            logger.debug(f"🔍 查询工单 {work_id} 的订单信息，使用表: {work_order_table}")
+            for table_name in candidate_tables:
+                if not self.stage1.check_table_exists(db, table_name):
+                    continue
+                
+                sql = sql_template.format(table_name=table_name)
+                logger.debug(f"🔍 查询工单 {work_id} 的订单信息，使用表: {table_name}")
+                
+                result = db.execute(text(sql), {"work_id": work_id}).fetchone()
+                if result:
+                    order_id, order_no = result[0], result[1]
+                    logger.debug(f"✅ 工单 {work_id} 对应的订单信息: order_id={order_id}, order_no={order_no}, 来源表={table_name}")
+                    return order_id, order_no
             
-            result = db.execute(text(sql), {"work_id": work_id}).fetchone()
-            
-            if result:
-                order_id = result[0]
-                order_no = result[1]
-                logger.debug(f"✅ 工单 {work_id} 对应的订单信息: order_id={order_id}, order_no={order_no}")
-                return order_id, order_no
-            else:
-                logger.warning(f"⚠️ 在表 {work_order_table} 中未找到工单 {work_id} 对应的订单信息")
-                return None, None
+            logger.warning(f"⚠️ 在可用的 t_work_order 分表中未找到工单 {work_id} 对应的订单信息")
+            return None, None
                 
         except Exception as e:
-            logger.error(f"❌ 查询工单 {work_id} 的订单信息失败，表: {work_order_table}, 错误: {e}")
+            logger.error(f"❌ 查询工单 {work_id} 的订单信息失败，错误: {e}")
             return None, None
     
     def _get_real_comment_stats_for_save(
@@ -512,8 +717,12 @@ class Stage2AnalysisService:
     ) -> bool:
         """保存AI分析结果到结果表"""
         
+        force_save = analysis_result.get("force_save", False) or analysis_result.get("first_response_timeout", False)
+        if force_save and analysis_result.get("first_response_timeout"):
+            logger.info(f"⏰ 工单 {work_id} 首次响应超时，强制落库记录首响指标")
+        
         # 🔥 修复：强制检查skip_save标记，确保低风险记录不被保存
-        if analysis_result.get("skip_save", False):
+        if analysis_result.get("skip_save", False) and not force_save:
             logger.info(f"⏭️ 工单 {work_id} 标记为跳过保存，不保存到数据库")
             return True  # 返回True表示"成功处理"，但实际没有保存
         
@@ -521,7 +730,7 @@ class Stage2AnalysisService:
         risk_level = analysis_result.get('risk_level', 'low')
         has_evasion = analysis_result.get('has_evasion', False)
         
-        if risk_level == 'low' and not has_evasion:
+        if risk_level == 'low' and not has_evasion and not force_save:
             logger.info(f"⏭️ 工单 {work_id} 风险级别为低且无规避行为，不保存到数据库")
             return True  # 返回True表示"成功处理"，但实际没有保存
         
@@ -542,28 +751,35 @@ class Stage2AnalysisService:
             # 这里使用 MySQL 的 UPSERT 语法，可以原子性地处理插入或更新
             upsert_sql = f"""
             INSERT INTO {self.results_table_name} (
-                work_id, order_id, order_no, session_start_time, session_end_time,
+                work_id, order_id, order_no, session_id, session_start_time, session_end_time,
                 total_comments, customer_comments, service_comments,
                 has_evasion, risk_level, confidence_score,
                 evasion_types, evidence_sentences, improvement_suggestions,
                 keyword_screening_score, matched_categories, matched_keywords, is_suspicious,
                 sentiment, sentiment_intensity, conversation_text,
+                work_create_time, first_service_reply_name,
+                first_response_seconds, first_response_timeout, first_response_rule_seconds,
+                first_customer_message_time, first_service_reply_time,
                 llm_raw_response, analysis_details, analysis_note,
                 llm_provider, llm_model, llm_tokens_used,
                 analysis_time, created_at, updated_at
             ) VALUES (
-                :work_id, :order_id, :order_no, :session_start_time, :session_end_time,
+                :work_id, :order_id, :order_no, :session_id, :session_start_time, :session_end_time,
                 :total_comments, :customer_comments, :service_comments,
                 :has_evasion, :risk_level, :confidence_score,
                 :evasion_types, :evidence_sentences, :improvement_suggestions,
                 :keyword_screening_score, :matched_categories, :matched_keywords, :is_suspicious,
                 :sentiment, :sentiment_intensity, :conversation_text,
+                :work_create_time, :first_service_reply_name,
+                :first_response_seconds, :first_response_timeout, :first_response_rule_seconds,
+                :first_customer_message_time, :first_service_reply_time,
                 :llm_raw_response, :analysis_details, :analysis_note,
                 :llm_provider, :llm_model, :llm_tokens_used,
                 :analysis_time, :created_at, :updated_at
             ) ON DUPLICATE KEY UPDATE
                 order_id = VALUES(order_id),
                 order_no = VALUES(order_no),
+                session_id = VALUES(session_id),
                 session_start_time = VALUES(session_start_time),
                 session_end_time = VALUES(session_end_time),
                 total_comments = VALUES(total_comments),
@@ -582,6 +798,13 @@ class Stage2AnalysisService:
                 sentiment = VALUES(sentiment),
                 sentiment_intensity = VALUES(sentiment_intensity),
                 conversation_text = VALUES(conversation_text),
+                work_create_time = VALUES(work_create_time),
+                first_service_reply_name = VALUES(first_service_reply_name),
+                first_response_seconds = VALUES(first_response_seconds),
+                first_response_timeout = VALUES(first_response_timeout),
+                first_response_rule_seconds = VALUES(first_response_rule_seconds),
+                first_customer_message_time = VALUES(first_customer_message_time),
+                first_service_reply_time = VALUES(first_service_reply_time),
                 llm_raw_response = VALUES(llm_raw_response),
                 analysis_details = VALUES(analysis_details),
                 analysis_note = VALUES(analysis_note),
@@ -744,13 +967,19 @@ class Stage2AnalysisService:
             categories_str = ",".join(categories_list)
             matched_categories_str = self._safe_truncate_text(categories_str, VARCHAR_LIMITS["matched_categories"])
         
+        # 首次响应阈值，默认使用配置值
+        first_response_rule_seconds = analysis_result.get("first_response_rule_seconds")
+        if first_response_rule_seconds is None:
+            first_response_rule_seconds = settings.service_first_response_threshold_minutes * 60
+        
         # 🔥 构建保存参数字典，保存完整原始数据（TEXT/LONGTEXT字段无长度限制）
         save_params = {
             "work_id": work_id,
             "order_id": order_id,
             "order_no": order_no,
-            "session_start_time": analysis_result.get("session_start_time"),
-            "session_end_time": analysis_result.get("session_end_time"),
+            "session_id": analysis_result.get("session_id") or str(work_id),
+            "session_start_time": self._normalize_datetime_value(analysis_result.get("session_start_time")),
+            "session_end_time": self._normalize_datetime_value(analysis_result.get("session_end_time")),
             "total_comments": int(analysis_result.get("total_comments", 0)),  # 确保是int类型
             "customer_comments": int(analysis_result.get("customer_messages", 0)),  # 确保是int类型  
             "service_comments": int(analysis_result.get("service_messages", 0)),  # 确保是int类型
@@ -774,6 +1003,15 @@ class Stage2AnalysisService:
             "llm_raw_response": safe_json_dumps(llm_raw_response) if llm_raw_response else None,
             "analysis_details": safe_json_dumps(analysis_result),
             "analysis_note": self._build_enhanced_analysis_note(analysis_result),
+            # 工单信息
+            "work_create_time": self._normalize_datetime_value(analysis_result.get("work_create_time")),
+            "first_service_reply_name": analysis_result.get("first_service_reply_name"),
+            # 首响统计
+            "first_response_seconds": int(analysis_result.get("first_response_seconds")) if analysis_result.get("first_response_seconds") is not None else None,
+            "first_response_timeout": 1 if analysis_result.get("first_response_timeout") else 0,
+            "first_response_rule_seconds": int(first_response_rule_seconds) if first_response_rule_seconds is not None else None,
+            "first_customer_message_time": self._normalize_datetime_value(analysis_result.get("first_customer_message_time")),
+            "first_service_reply_time": self._normalize_datetime_value(analysis_result.get("first_service_reply_time")),
             # LLM调用信息
             "llm_provider": llm_provider,
             "llm_model": llm_model,
@@ -2179,6 +2417,8 @@ class Stage2AnalysisService:
         try:
             conversation_text = str(conversation_data.get("conversation_text") or "")
             messages = conversation_data.get("messages", [])
+            first_response_payload = self._build_first_response_payload(conversation_data.get("first_response"))
+            force_save_for_timeout = bool(first_response_payload.get("first_response_timeout"))
             
             if not conversation_text.strip() or not messages:
                 logger.warning(f"⚠️ 工单 {work_id} 对话内容或消息列表为空")
@@ -2263,6 +2503,9 @@ class Stage2AnalysisService:
                     final_result = self._merge_regex_and_llm_results(
                         keyword_result, detailed_evidence, llm_analysis, conversation_data
                     )
+                    final_result.update(first_response_payload)
+                    if force_save_for_timeout:
+                        final_result["force_save"] = True
                     
                     # 🔥 新增：处理低风险但关键词命中的情况
                     if final_result.get("risk_level", "low") == "low" and len(detailed_evidence) > 0:
@@ -2335,6 +2578,10 @@ class Stage2AnalysisService:
                         "evidence_count": len(detailed_evidence)
                     }
                     
+                    fallback_result.update(first_response_payload)
+                    if force_save_for_timeout:
+                        fallback_result["force_save"] = True
+                    
                     return {
                         "success": True,
                         "work_id": work_id,
@@ -2365,6 +2612,11 @@ class Stage2AnalysisService:
                     "service_comments": conversation_data.get("service_messages", 0),
                     "conversation_text": conversation_text
                 }
+                
+                low_risk_result.update(first_response_payload)
+                if force_save_for_timeout:
+                    low_risk_result["force_save"] = True
+                    low_risk_result["skip_save"] = False  # 超时必须落库，覆盖跳过策略
                 
                 return {
                     "success": True,

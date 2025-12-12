@@ -1436,6 +1436,30 @@ async def update_task_config(
         if not filtered_updates:
             raise HTTPException(status_code=400, detail="没有有效的更新字段")
         
+        # 规范化调度字段，避免写入非法值
+        if 'schedule_cron' in filtered_updates:
+            cron_expr = filtered_updates.get('schedule_cron')
+            if isinstance(cron_expr, str):
+                cron_expr = cron_expr.strip()
+                filtered_updates['schedule_cron'] = cron_expr or None
+        
+        if 'schedule_interval' in filtered_updates:
+            interval_val = filtered_updates.get('schedule_interval')
+            if interval_val is None:
+                # 当切换为cron调度时，interval无需更新；避免写入NULL到NOT NULL列
+                if filtered_updates.get('schedule_cron'):
+                    filtered_updates.pop('schedule_interval', None)
+                else:
+                    raise HTTPException(status_code=400, detail="schedule_interval 不能为空")
+            else:
+                try:
+                    interval_int = int(interval_val)
+                except Exception:
+                    raise HTTPException(status_code=400, detail="schedule_interval 必须为整数")
+                if interval_int <= 0:
+                    raise HTTPException(status_code=400, detail="schedule_interval 必须大于0")
+                filtered_updates['schedule_interval'] = interval_int
+        
         # 验证cron表达式（如果提供了）
         if 'schedule_cron' in filtered_updates:
             cron_expr = filtered_updates['schedule_cron']

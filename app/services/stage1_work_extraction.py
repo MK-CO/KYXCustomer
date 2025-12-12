@@ -22,6 +22,7 @@ class Stage1WorkExtractionService:
     def __init__(self):
         """初始化第一阶段服务"""
         self.work_table_base_name = "t_work"
+        self.additional_work_table_base_names = ["t_work_order"]  # 需要同步抽取的额外工单分表前缀
         self.comment_table_base_name = "t_work_comment"
         self.pending_table_name = "ai_work_pending_analysis"
         self.current_year = datetime.now().year
@@ -31,20 +32,24 @@ class Stage1WorkExtractionService:
     
     # ==================== 表名管理方法 ====================
     
-    def get_work_table_name(self, year: int = None) -> str:
+    def get_work_table_name(self, year: int = None, base_name: Optional[str] = None) -> str:
         """获取工单表名"""
         if year is None:
             year = self.current_year
-        return f"{self.work_table_base_name}_{year}"
+        table_base = base_name or self.work_table_base_name
+        return f"{table_base}_{year}"
     
-    def get_comment_table_name(self, year: int = None) -> str:
+    def get_comment_table_name(self, year: int = None, base_name: Optional[str] = None) -> str:
         """获取评论表名"""
         if year is None:
             year = self.current_year
+        # 暂时共用同一套评论表
+        _ = base_name  # 预留参数，便于后续扩展不同前缀的评论表
         return f"{self.comment_table_base_name}_{year}"
     
-    def discover_work_tables(self, db: Session) -> List[str]:
+    def discover_work_tables(self, db: Session, base_name: Optional[str] = None) -> List[str]:
         """发现所有工单分表"""
+        work_table_base = base_name or self.work_table_base_name
         logger.info("=== 开始发现工单分表 ===")
         try:
             sql = """
@@ -56,7 +61,7 @@ class Stage1WorkExtractionService:
             ORDER BY table_name DESC
             """
             
-            pattern = f"{self.work_table_base_name}_%"
+            pattern = f"{work_table_base}_%"
             logger.info(f"执行SQL查询发现工单表，匹配模式: {pattern}")
             logger.debug(f"SQL查询: {sql}")
             
@@ -66,7 +71,7 @@ class Stage1WorkExtractionService:
             logger.info(f"✓ 查询到 {len(all_tables)} 个候选工单表: {all_tables}")
             
             # 验证表名格式，只接受 t_work_YYYY 格式
-            year_pattern = re.compile(rf'^{re.escape(self.work_table_base_name)}_(\d{{4}})$')
+            year_pattern = re.compile(rf'^{re.escape(work_table_base)}_(\d{{4}})$')
             valid_tables = []
             for table in all_tables:
                 match = year_pattern.match(table)
@@ -82,14 +87,14 @@ class Stage1WorkExtractionService:
             
             logger.info(f"✓ 发现 {len(valid_tables)} 个有效工单表: {valid_tables}")
             if not valid_tables:
-                logger.warning(f"⚠️ 未发现任何有效工单表，将使用默认表: {self.work_table_base_name}_{self.current_year}")
-                return [f"{self.work_table_base_name}_{self.current_year}"]
+                logger.warning(f"⚠️ 未发现任何有效工单表，将使用默认表: {work_table_base}_{self.current_year}")
+                return [f"{work_table_base}_{self.current_year}"]
             
             return valid_tables
             
         except Exception as e:
             logger.error(f"❌ 发现工单分表失败: {e}")
-            default_table = f"{self.work_table_base_name}_{self.current_year}"
+            default_table = f"{work_table_base}_{self.current_year}"
             logger.info(f"使用默认工单表: {default_table}")
             return [default_table]
     
@@ -188,9 +193,12 @@ class Stage1WorkExtractionService:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         target_date: Optional[datetime] = None,
-        days_back: int = 1
+        days_back: int = 1,
+        work_table_base_name: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """重构：先查询总数量，然后固定次数批量抽取工单数据"""
+        table_base = work_table_base_name or self.work_table_base_name
+        logger.info(f"📂 批量抽取目标表前缀: {table_base}")
         
         # 确定时间范围
         if start_time is not None and end_time is not None:
@@ -213,12 +221,12 @@ class Stage1WorkExtractionService:
         # 1. 先查询符合条件的工单总数量
         try:
             target_year = actual_start_time.year
-            work_table_name = self.get_work_table_name(target_year)
+            work_table_name = self.get_work_table_name(target_year, base_name=table_base)
             
             # 验证表是否存在
             if not self.check_table_exists(db, work_table_name):
                 logger.warning(f"⚠️ 工单表 {work_table_name} 不存在，使用当前年份表")
-                work_table_name = self.get_work_table_name()
+                work_table_name = self.get_work_table_name(base_name=table_base)
                 if not self.check_table_exists(db, work_table_name):
                     logger.error(f"❌ 工单表 {work_table_name} 不存在")
                     return []
@@ -275,7 +283,7 @@ class Stage1WorkExtractionService:
             
             batch_orders = self.extract_work_orders_by_time_range(
                 db, actual_start_time, actual_end_time, None, 1, 
-                limit=batch_size, offset=current_offset
+                limit=batch_size, offset=current_offset, work_table_base_name=table_base
             )
             
             if not batch_orders:
@@ -298,11 +306,14 @@ class Stage1WorkExtractionService:
         target_date: Optional[datetime] = None,
         days_back: int = 1,
         limit: Optional[int] = None,
-        offset: int = 0
+        offset: int = 0,
+        work_table_base_name: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """根据时间范围抽取工单"""
+        table_base = work_table_base_name or self.work_table_base_name
         logger.info("=" * 50)
         logger.info("🚀 开始根据时间范围抽取工单")
+        logger.info(f"📂 工单表前缀: {table_base}")
         
         # 处理时间范围参数的优先级：start_time/end_time > target_date > days_back
         if start_time is not None and end_time is not None:
@@ -330,18 +341,18 @@ class Stage1WorkExtractionService:
         
         # 根据开始时间确定目标年份（如果跨年，使用开始时间的年份）
         target_year = start_time.year
-        work_table_name = self.get_work_table_name(target_year)
-        comment_table_name = self.get_comment_table_name(target_year)
+        work_table_name = self.get_work_table_name(target_year, base_name=table_base)
+        comment_table_name = self.get_comment_table_name(target_year, base_name=table_base)
         
         logger.info(f"🎯 预期使用表: 工单表={work_table_name}, 评论表={comment_table_name}")
         
         # 验证工单表是否存在
         logger.info("🔍 验证工单表是否存在...")
-        available_tables = self.discover_work_tables(db)
+        available_tables = self.discover_work_tables(db, base_name=table_base)
         if work_table_name not in available_tables:
             logger.warning(f"⚠️ 工单表 {work_table_name} 不存在，使用当前年份表")
-            work_table_name = self.get_work_table_name()
-            comment_table_name = self.get_comment_table_name()
+            work_table_name = self.get_work_table_name(base_name=table_base)
+            comment_table_name = self.get_comment_table_name(base_name=table_base)
             logger.info(f"🔄 调整后使用表: 工单表={work_table_name}, 评论表={comment_table_name}")
         else:
             logger.info(f"✓ 工单表 {work_table_name} 存在，继续使用")
@@ -914,11 +925,18 @@ class Stage1WorkExtractionService:
         logger.info(f"📋 参数: start_time={start_time}, end_time={end_time}, target_date={target_date}, days_back={days_back}")
         
         try:
-            # 1. 循环批量抽取工单数据
+            # 1. 循环批量抽取工单数据（支持多种工单前缀）
             logger.info("📝 步骤1: 循环批量抽取工单数据")
-            all_work_orders = self._batch_extract_work_orders_by_time_range(
-                db, start_time, end_time, target_date, days_back
-            )
+            all_work_orders: List[Dict[str, Any]] = []
+            work_table_bases: List[str] = [self.work_table_base_name] + self.additional_work_table_base_names
+            
+            for table_base in work_table_bases:
+                logger.info(f"🔍 开始抽取前缀为 {table_base} 的工单数据")
+                extracted = self._batch_extract_work_orders_by_time_range(
+                    db, start_time, end_time, target_date, days_back, work_table_base_name=table_base
+                )
+                logger.info(f"✅ 前缀 {table_base} 抽取到 {len(extracted)} 条工单")
+                all_work_orders.extend(extracted)
             
             # 确定实际使用的时间范围
             if start_time is not None and end_time is not None:

@@ -174,6 +174,11 @@ class Settings:
     def detection_confidence_threshold(self) -> float:
         return config.get_float("detection.confidence.threshold", 0.6)
     
+    # 首次响应时长配置
+    @property
+    def service_first_response_threshold_minutes(self) -> int:
+        return config.get_int("service.first.response.threshold.minutes", 2)
+    
     # 调度器配置已移除 - 现在完全由数据库任务配置控制
     
     # 数据处理配置

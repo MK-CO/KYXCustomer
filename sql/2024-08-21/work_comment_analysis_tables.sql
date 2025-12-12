@@ -15,6 +15,11 @@ CREATE TABLE `ai_work_comment_analysis_results` (
   `total_comments` int(11) DEFAULT '0' COMMENT '总回复数',
   `customer_comments` int(11) DEFAULT '0' COMMENT '客户回复数',
   `service_comments` int(11) DEFAULT '0' COMMENT '客服回复数',
+  `first_response_seconds` int(11) DEFAULT NULL COMMENT '首次客服响应耗时(秒)',
+  `first_response_timeout` tinyint(1) DEFAULT '0' COMMENT '首次响应是否超时',
+  `first_response_rule_seconds` int(11) DEFAULT '120' COMMENT '首次响应超时阈值(秒)',
+  `first_customer_message_time` datetime DEFAULT NULL COMMENT '商家首条消息时间',
+  `first_service_reply_time` datetime DEFAULT NULL COMMENT '客服首次回复时间',
   
   -- 规避责任检测结果
   `has_evasion` tinyint(1) DEFAULT '0' COMMENT '是否规避责任 0/1',
@@ -59,7 +64,8 @@ CREATE TABLE `ai_work_comment_analysis_results` (
   KEY `idx_has_evasion_analysis` (`has_evasion`),
   KEY `idx_analysis_time_analysis` (`analysis_time`),
   KEY `idx_session_start_time_analysis` (`session_start_time`),
-  KEY `idx_confidence_score_analysis` (`confidence_score`)
+  KEY `idx_confidence_score_analysis` (`confidence_score`),
+  KEY `idx_first_response_timeout` (`first_response_timeout`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工单回复分析结果表';
 
 
