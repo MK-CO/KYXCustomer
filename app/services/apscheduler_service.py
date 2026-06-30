@@ -213,37 +213,96 @@ class APSchedulerService:
             logger.error(f"❌ 注册任务失败: {config.get('task_key')}, {e}")
     
     async def _execute_task(self, config: Dict[str, Any]):
-        """执行具体任务"""
+        """执行具体任务 - 完整流程（抽取前一天数据+分析）"""
         task_key = config.get("task_key")
         task_id = f"APS_{task_key}_{int(datetime.now().timestamp())}"
-        
+
         try:
             from app.db.connection_manager import get_db_session
             from app.models.task import task_record
-            from app.services.stage2_analysis_service import execute_batch_analysis_workflow
-            
+            from app.services.stage1_work_extraction import stage1_service
+            from app.services.stage2_analysis_service import stage2_service
+            from sqlalchemy import text
+
+            # 🔥 计算前一天的时间范围
+            yesterday = datetime.now() - timedelta(days=1)
+            target_date = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+            logger.info(f"📅 定时任务目标日期: {target_date.strftime('%Y-%m-%d')}")
+
             # 🔥 修复：使用连接管理器防止连接泄漏
             with get_db_session() as db:
                 # 创建任务记录
                 db_task_id = task_record.create_task_record(
                     db=db,
-                    task_name=config.get("task_name", "APScheduler任务"),
+                    task_name=config.get("task_name", "APScheduler定时任务（抽取+分析）"),
                     task_type="batch_analysis",
                     trigger_type="scheduled",
                     batch_size=settings.concurrency_analysis_batch_size,
                     max_concurrent=settings.concurrency_analysis_max_concurrent,
                     task_config_key=task_key,
                     execution_details={
-                        "description": "APScheduler调度的批量分析任务",
-                        "apscheduler_task_id": task_id
+                        "description": "APScheduler定时任务：抽取前一天数据+分析",
+                        "apscheduler_task_id": task_id,
+                        "target_date": target_date.strftime('%Y-%m-%d')
                     }
                 )
-                
+
                 logger.info(f"🚀 APScheduler任务开始: {db_task_id}")
-                
-                # 执行批量分析流程
-                await execute_batch_analysis_workflow(db, db_task_id)
-                
+
+                # ========== 阶段1：数据抽取（前一天） ==========
+                task_record.update_task_progress(
+                    db=db,
+                    task_id=db_task_id,
+                    process_stage="数据抽取中"
+                )
+
+                extraction_result = stage1_service.extract_work_data_by_time_range(
+                    db=db,
+                    target_date=target_date
+                )
+
+                if not extraction_result.get("success"):
+                    raise Exception(f"数据抽取失败: {extraction_result.get('message', '未知错误')}")
+
+                stats = extraction_result.get("statistics", {})
+                extracted = stats.get("extracted", 0)
+                inserted = stats.get("inserted", 0)
+                skipped = stats.get("skipped", 0)
+
+                task_record.update_task_progress(
+                    db=db,
+                    task_id=db_task_id,
+                    process_stage="数据抽取完成，开始分析",
+                    extracted_records=extracted,
+                    skipped_records=skipped,
+                    duplicate_records=skipped
+                )
+
+                logger.info(f"✅ 阶段1完成: 抽取{extracted}条，插入{inserted}条，跳过重复{skipped}条")
+
+                # ========== 阶段2：批量分析 ==========
+                pending_count_sql = f"""
+                SELECT COUNT(*) as count
+                FROM {stage1_service.pending_table_name}
+                WHERE ai_status = 'PENDING'
+                """
+                pending_result = db.execute(text(pending_count_sql))
+                total_pending_orders = pending_result.fetchone()[0]
+
+                task_record.update_task_progress(
+                    db=db,
+                    task_id=db_task_id,
+                    process_stage="批量分析中",
+                    total_records=total_pending_orders,
+                    processed_records=0
+                )
+
+                analysis_result = await stage2_service.process_pending_analysis_queue(db)
+
+                if not analysis_result.get("success"):
+                    logger.warning(f"⚠️ 分析阶段有错误: {analysis_result.get('error', '未知')}")
+
                 # 任务完成
                 task_record.complete_task(
                     db=db,
@@ -251,12 +310,15 @@ class APSchedulerService:
                     status="completed",
                     execution_details={
                         "apscheduler_task_id": task_id,
+                        "target_date": target_date.strftime('%Y-%m-%d'),
+                        "extraction": {"extracted": extracted, "inserted": inserted, "skipped": skipped},
+                        "analysis": analysis_result,
                         "completed_at": datetime.now().isoformat()
                     }
                 )
-                
+
                 logger.info(f"✅ APScheduler任务完成: {db_task_id}")
-                
+
                 # 更新任务配置的执行统计
                 await self._update_task_stats(db, task_key, success=True)
                     

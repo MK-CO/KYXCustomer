@@ -905,6 +905,62 @@ class Stage2AnalysisService:
             logger.warning(f"JSON截断失败: {e}")
             return f'{{"error": "数据过长已截断", "original_type": "{type(data).__name__}"}}'
 
+    def _build_highlighted_conversation(
+        self,
+        conversation_text: str,
+        evidence_sentences: List[Dict[str, Any]]
+    ) -> str:
+        """
+        构建带证据高亮标记的对话文本
+
+        在证据句子周围添加 <evidence> 标签，供前端高亮显示
+
+        Args:
+            conversation_text: 原始对话文本
+            evidence_sentences: 证据句子列表
+
+        Returns:
+            带高亮标记的对话文本
+        """
+        if not conversation_text or not evidence_sentences:
+            return conversation_text
+
+        highlighted_text = conversation_text
+
+        # 收集所有需要高亮的文本片段
+        highlight_texts = set()
+
+        for evidence in evidence_sentences:
+            if isinstance(evidence, dict):
+                # 优先使用 message_content（完整消息内容）
+                msg_content = evidence.get("message_content", "")
+                if msg_content:
+                    highlight_texts.add(msg_content.strip())
+
+                # 也添加 matched_text（匹配的关键词/文本）
+                matched_text = evidence.get("matched_text", "")
+                if matched_text:
+                    highlight_texts.add(matched_text.strip())
+            elif isinstance(evidence, str):
+                # 兼容旧格式（纯字符串）
+                if evidence.strip():
+                    highlight_texts.add(evidence.strip())
+
+        # 按长度降序排序，优先匹配长文本避免部分匹配问题
+        sorted_texts = sorted(highlight_texts, key=len, reverse=True)
+
+        # 对每个证据文本添加高亮标记
+        for text in sorted_texts:
+            if text and text in highlighted_text:
+                # 避免重复标记
+                if f"<evidence>{text}</evidence>" not in highlighted_text:
+                    highlighted_text = highlighted_text.replace(
+                        text,
+                        f"<evidence>{text}</evidence>"
+                    )
+
+        return highlighted_text
+
     def _build_analysis_params(self, work_id: int, analysis_result: Dict[str, Any], order_id: Optional[int] = None, order_no: Optional[str] = None) -> Dict[str, Any]:
         """构建分析结果参数，保存完整原始数据"""
         import json
@@ -999,7 +1055,11 @@ class Stage2AnalysisService:
             "sentiment": analysis_result.get("sentiment", "neutral"),
             "sentiment_intensity": float(analysis_result.get("sentiment_intensity", 0.0)),  # 确保是float类型
             # 原始数据 - 保存完整数据（LONGTEXT字段）
-            "conversation_text": analysis_result.get("conversation_text", ""),
+            # 🔥 对话文本添加证据高亮标记，供前端高亮显示
+            "conversation_text": self._build_highlighted_conversation(
+                analysis_result.get("conversation_text", ""),
+                analysis_result.get("evidence_sentences", [])
+            ),
             "llm_raw_response": safe_json_dumps(llm_raw_response) if llm_raw_response else None,
             "analysis_details": safe_json_dumps(analysis_result),
             "analysis_note": self._build_enhanced_analysis_note(analysis_result),

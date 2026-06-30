@@ -25,10 +25,14 @@ class Stage1WorkExtractionService:
         self.additional_work_table_base_names = ["t_work_order"]  # 需要同步抽取的额外工单分表前缀
         self.comment_table_base_name = "t_work_comment"
         self.pending_table_name = "ai_work_pending_analysis"
-        self.current_year = datetime.now().year
         self._table_cache = {}
         self._cache_expire_time = None
         self._cache_duration = timedelta(hours=1)
+
+    @property
+    def current_year(self) -> int:
+        """动态获取当前年份，避免跨年问题"""
+        return datetime.now().year
     
     # ==================== 表名管理方法 ====================
     
